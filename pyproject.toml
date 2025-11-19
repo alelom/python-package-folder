@@ -2,8 +2,8 @@
 
 [project.urls]
 Repository = "https://github.com/alelom/python-package-folder"
-# Homepage = "https://..."
-# Documentation = "https://..."
+# Homepage = "https://github.com/alelom/python-package-folder"
+# Documentation = "https://github.com/alelom/python-package-folder"
 
 [project]
 name = "python-package-folder"
