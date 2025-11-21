@@ -52,11 +52,12 @@ dev = [
     "rich>=14.0.0",
     "basedpyright>=1.29.1",
     "funlog>=0.2.1",
+    "sysappend>=2.0.0",
 ]
 
 [project.scripts]
 # Add script entry points here:
-python-package-folder = "python_package_folder:main"
+python-package-folder = "python_package_folder.python_package_folder:main"
 
 
 # ---- Build system ----
