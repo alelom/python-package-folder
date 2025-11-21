@@ -283,3 +283,78 @@ class TestSubfolderBuildConfig:
         )
         assert config2.package_name == "subfolder-with-spaces"
 
+
+def test_readme_handling_with_existing_readme(test_project_with_pyproject: Path):
+    """Test that subfolder README is used when it exists."""
+    project_root = test_project_with_pyproject
+    subfolder = project_root / "subfolder"
+    
+    # Create README in subfolder
+    subfolder_readme = subfolder / "README.md"
+    subfolder_readme.write_text("# Subfolder Package\n\nThis is the subfolder README.")
+    
+    # Create README in project root
+    project_readme = project_root / "README.md"
+    project_readme.write_text("# Parent Package\n\nThis is the parent README.")
+    
+    config = SubfolderBuildConfig(
+        project_root=project_root,
+        src_dir=subfolder,
+        version="1.0.0",
+    )
+    
+    try:
+        config.create_temp_pyproject()
+        
+        # Check that subfolder README was copied to project root
+        assert (project_root / "README.md").exists()
+        content = (project_root / "README.md").read_text()
+        assert "Subfolder Package" in content
+        assert "This is the subfolder README" in content
+        assert "Parent Package" not in content
+        
+        # Check that backup was created
+        assert (project_root / "README.md.backup").exists()
+        backup_content = (project_root / "README.md.backup").read_text()
+        assert "Parent Package" in backup_content
+    finally:
+        config.restore()
+        
+        # Verify original README was restored
+        assert (project_root / "README.md").exists()
+        restored_content = (project_root / "README.md").read_text()
+        assert "Parent Package" in restored_content
+        assert "Subfolder Package" not in restored_content
+        assert not (project_root / "README.md.backup").exists()
+
+
+def test_readme_handling_without_readme(test_project_with_pyproject: Path):
+    """Test that minimal README is created when subfolder has no README."""
+    project_root = test_project_with_pyproject
+    subfolder = project_root / "subfolder"
+    
+    # Ensure no README exists
+    assert not (subfolder / "README.md").exists()
+    assert not (subfolder / "README.rst").exists()
+    
+    config = SubfolderBuildConfig(
+        project_root=project_root,
+        src_dir=subfolder,
+        version="1.0.0",
+    )
+    
+    try:
+        config.create_temp_pyproject()
+        
+        # Check that minimal README was created
+        assert (project_root / "README.md").exists()
+        content = (project_root / "README.md").read_text()
+        assert content.strip() == f"# {subfolder.name}"
+    finally:
+        config.restore()
+        
+        # Verify README was removed if it didn't exist before
+        if not (project_root / "README.md.backup").exists():
+            # No backup means no original README, so temp should be removed
+            assert not (project_root / "README.md").exists() or (project_root / "README.md").read_text() != f"# {subfolder.name}\n"
+

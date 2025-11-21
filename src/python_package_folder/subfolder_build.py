@@ -59,6 +59,8 @@ class SubfolderBuildConfig:
         self.temp_pyproject: Path | None = None
         self.original_pyproject_backup: Path | None = None
         self._temp_init_created = False
+        self.temp_readme: Path | None = None
+        self.original_readme_backup: Path | None = None
 
     def _derive_package_name(self) -> str:
         """Derive package name from source directory name."""
@@ -188,6 +190,9 @@ class SubfolderBuildConfig:
         # Write the modified content
         original_pyproject.write_text(modified_content, encoding="utf-8")
         self.temp_pyproject = original_pyproject
+
+        # Handle README file
+        self._handle_readme()
 
         return original_pyproject
 
@@ -359,6 +364,52 @@ class SubfolderBuildConfig:
 
         return "\n".join(result)
 
+    def _handle_readme(self) -> None:
+        """
+        Handle README file for subfolder builds.
+        
+        - If README exists in subfolder, copy it to project root
+        - If no README exists, create a minimal one with folder name
+        - Backup original README if it exists in project root
+        """
+        # Common README file names
+        readme_names = ["README.md", "README.rst", "README.txt", "README"]
+        
+        # Check for README in subfolder
+        subfolder_readme = None
+        for name in readme_names:
+            readme_path = self.src_dir / name
+            if readme_path.exists():
+                subfolder_readme = readme_path
+                break
+        
+        # Check for existing README in project root
+        project_readme = None
+        for name in readme_names:
+            readme_path = self.project_root / name
+            if readme_path.exists():
+                project_readme = readme_path
+                break
+        
+        # Backup original README if it exists
+        if project_readme:
+            backup_path = self.project_root / f"{project_readme.name}.backup"
+            shutil.copy2(project_readme, backup_path)
+            self.original_readme_backup = backup_path
+        
+        # Use subfolder README if it exists
+        if subfolder_readme:
+            # Copy subfolder README to project root
+            target_readme = self.project_root / subfolder_readme.name
+            shutil.copy2(subfolder_readme, target_readme)
+            self.temp_readme = target_readme
+        else:
+            # Create minimal README with folder name
+            readme_content = f"# {self.src_dir.name}\n"
+            target_readme = self.project_root / "README.md"
+            target_readme.write_text(readme_content, encoding="utf-8")
+            self.temp_readme = target_readme
+
     def restore(self) -> None:
         """Restore the original pyproject.toml and remove temporary __init__.py if created."""
         # Remove temporary __init__.py if we created it
@@ -370,6 +421,32 @@ class SubfolderBuildConfig:
                 except Exception:
                     pass  # Ignore errors during cleanup
             self._temp_init_created = False
+        
+        # Restore original README if it was backed up
+        backup_path = self.original_readme_backup
+        had_backup = backup_path and backup_path.exists()
+        original_readme_path = None
+        if had_backup:
+            original_readme_name = backup_path.stem  # Get name without .backup extension
+            original_readme_path = self.project_root / original_readme_name
+            shutil.copy2(backup_path, original_readme_path)
+            backup_path.unlink()
+            self.original_readme_backup = None
+        
+        # Remove temporary README if we created it or copied from subfolder
+        # Only remove if it's different from the original we just restored
+        if self.temp_readme and self.temp_readme.exists():
+            # If we restored an original README and the temp is the same file, don't remove it
+            if had_backup and original_readme_path and self.temp_readme.samefile(original_readme_path):
+                # Temp README is the same as the restored original, so don't remove it
+                pass
+            else:
+                # Remove the temp README (either no original existed, or it's a different file)
+                try:
+                    self.temp_readme.unlink()
+                except Exception:
+                    pass  # Ignore errors during cleanup
+            self.temp_readme = None
         
         # Restore original pyproject.toml
         if self.original_pyproject_backup and self.original_pyproject_backup.exists():

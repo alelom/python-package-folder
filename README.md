@@ -91,6 +91,9 @@ The tool automatically:
   - Version from `--version` argument
   - Proper package path configuration for hatchling
 - Creates temporary `__init__.py` files if needed to make subfolders valid Python packages
+- **README handling for subfolder builds**:
+  - If a README file (README.md, README.rst, README.txt, or README) exists in the subfolder, it will be used instead of the parent README
+  - If no README exists in the subfolder, a minimal README with just the folder name will be created
 - Restores the original `pyproject.toml` after build (unless `--no-restore-versioning` is used)
 - Cleans up temporary `__init__.py` files after build
 
@@ -250,6 +253,9 @@ For subfolder builds:
   - Correct package path for hatchling
   - Dependency group from parent (if `--dependency-group` is specified)
 - **Package initialization**: Automatically creates `__init__.py` if the subfolder doesn't have one (required for hatchling)
+- **README handling**: 
+  - If a README file exists in the subfolder, it will be used instead of the parent README
+  - If no README exists in the subfolder, a minimal README with just the folder name will be created
 - **Auto-restore**: Original `pyproject.toml` is restored after build, and temporary `__init__.py` files are removed
 
 ### Python API for Version Management
@@ -569,7 +575,10 @@ config.restore()
 - `create_temp_pyproject() -> Path`: Create temporary `pyproject.toml` with subfolder-specific configuration
 - `restore() -> None`: Restore original `pyproject.toml` and clean up temporary files
 
-**Note**: This class automatically creates `__init__.py` files if needed to make subfolders valid Python packages.
+**Note**: This class automatically creates `__init__.py` files if needed to make subfolders valid Python packages. It also handles README files:
+- If a README exists in the subfolder, it will be used instead of the parent README
+- If no README exists in the subfolder, a minimal README with just the folder name will be created
+- The original parent README is backed up and restored after the build completes
 
 ## How It Works
 
@@ -608,12 +617,16 @@ config.restore()
 1. **Project Root Detection**: Searches parent directories for `pyproject.toml`
 2. **Source Directory Detection**: Uses current directory if it contains Python files, otherwise falls back to `project_root/src`
 3. **Package Initialization**: Creates temporary `__init__.py` if subfolder doesn't have one (required for hatchling)
-4. **Configuration Creation**: Creates temporary `pyproject.toml` with:
+4. **README Handling**: 
+   - Checks for README files in the subfolder (README.md, README.rst, README.txt, or README)
+   - If found, copies the subfolder README to project root (backing up the original parent README)
+   - If not found, creates a minimal README with just the folder name
+5. **Configuration Creation**: Creates temporary `pyproject.toml` with:
    - Subfolder-specific package name (derived or custom)
    - Specified version
    - Correct package path for hatchling
-5. **Build Execution**: Runs build command with all dependencies in place
-6. **Cleanup**: Restores original `pyproject.toml` and removes temporary `__init__.py`
+6. **Build Execution**: Runs build command with all dependencies in place
+7. **Cleanup**: Restores original `pyproject.toml` and removes temporary `__init__.py`
 
 ## Requirements
 
