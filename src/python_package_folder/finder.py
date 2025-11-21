@@ -74,23 +74,22 @@ class ExternalDependencyFinder:
                     if self._should_exclude_path(source_path):
                         continue
 
-                    # For files, check if we should copy the parent directory
-                    # Copy parent directory if:
-                    # 1. It's a package (has __init__.py), OR
-                    # 2. Files from it are actually imported (which is the case here since source_path is a file)
+                    # For files, only copy parent directory if it's a package
+                    # Otherwise, copy just the individual file
                     if source_path.is_file():
                         parent_dir = source_path.parent
                         module_parts = imp.module_name.split(".")
 
-                        # Check if parent directory should be copied
+                        # Only copy parent directory if it's a package (has __init__.py)
+                        # This ensures we maintain package structure when needed,
+                        # but don't copy entire directory trees unnecessarily
                         parent_is_package = (parent_dir / "__init__.py").exists()
-                        # Files in parent directory are used (source_path is a file being imported)
-                        files_in_parent_are_used = True  # Since we're processing an import of a file from this parent
+                        files_are_imported = True  # Always true when processing an import
+                        is_multi_level = len(module_parts) > 2
                         
                         should_copy_dir = (
                             not self._should_exclude_path(parent_dir)
-                            and (parent_is_package or files_in_parent_are_used)  # Package OR files are used
-                            and len(module_parts) > 2  # Has at least package.module structure
+                            and (parent_is_package or (files_are_imported and is_multi_level))  # Package OR (files imported AND multi-level)
                             and not parent_dir.is_relative_to(self.src_dir)
                             and not self.src_dir.is_relative_to(parent_dir)
                             and parent_dir != self.project_root

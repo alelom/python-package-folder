@@ -252,9 +252,19 @@ class BuildManager:
         
         def should_exclude(path: Path) -> bool:
             """Check if a path should be excluded."""
-            for part in path.parts:
-                if any(part.startswith(pattern) or part == pattern for pattern in exclude_patterns):
+            # Check the path name itself and all its parts
+            path_str = str(path)
+            path_name = path.name
+            for pattern in exclude_patterns:
+                # Check if path name starts with or equals the pattern
+                if path_name.startswith(pattern) or path_name == pattern:
                     return True
+                # Also check if any part of the path contains the pattern
+                if pattern in path_str:
+                    # Check each part individually
+                    for part in path.parts:
+                        if part.startswith(pattern) or part == pattern:
+                            return True
             return False
 
         # Create destination directory
