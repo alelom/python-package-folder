@@ -1,55 +1,23 @@
-# python-package-folder
+# python-package-folder <!-- omit from toc -->
 
 [![Tests](https://github.com/alelom/python-package-folder/actions/workflows/ci.yml/badge.svg)](https://github.com/alelom/python-package-folder/actions/workflows/ci.yml)
 [![Coverage](https://raw.githubusercontent.com/alelom/python-package-folder/main/coverage.svg)](https://github.com/alelom/python-package-folder)
 
-Easily build and publish any target folder in a repository, including subfolders of a monorepo.
+Easily build and publish any target folder in a repository, including subfolders of a monorepo.  
 Together with [sysappend](https://pypi.org/project/sysappend/), this library makes relative imports, flexible import management, and package publishing a breeze.
 
-- [python-package-folder](#python-package-folder)
-  - [Use Cases](#use-cases)
-    - [1) Publishing a Subfolder from src/ in a Monorepo](#1-publishing-a-subfolder-from-src-in-a-monorepo)
-    - [2) Building Packages with Shared Code](#2-building-packages-with-shared-code)
-  - [Features](#features)
-  - [Installation](#installation)
-  - [Quick Start](#quick-start)
-    - [Command Line Usage](#command-line-usage)
-      - [Build/publish a specific subfolder in a repository](#buildpublish-a-specific-subfolder-in-a-repository)
-  - [How does `python-package-folder` work?](#how-does-python-package-folder-work)
-    - [Building from Subdirectories](#building-from-subdirectories)
-    - [Python API Usage](#python-api-usage)
-  - [Working with sysappend](#working-with-sysappend)
-  - [Version Management](#version-management)
-    - [Manual Version Setting](#manual-version-setting)
-    - [Subfolder Versioning](#subfolder-versioning)
-    - [Python API for Version Management](#python-api-for-version-management)
-    - [Dynamic Versioning](#dynamic-versioning)
-  - [Publishing Packages](#publishing-packages)
-    - [Command Line Publishing](#command-line-publishing)
-    - [Credentials](#credentials)
-    - [Smart File Filtering](#smart-file-filtering)
-    - [Python API Publishing](#python-api-publishing)
-    - [Credential Storage](#credential-storage)
-  - [Command Line Options](#command-line-options)
-  - [API Reference](#api-reference)
-    - [BuildManager](#buildmanager)
-    - [ImportAnalyzer](#importanalyzer)
-    - [ExternalDependencyFinder](#externaldependencyfinder)
-    - [Publisher](#publisher)
-    - [VersionManager](#versionmanager)
-    - [SubfolderBuildConfig](#subfolderbuildconfig)
-  - [How It Works](#how-it-works)
-    - [Build Process](#build-process)
-    - [Publishing Process](#publishing-process)
-    - [Subfolder Build Process](#subfolder-build-process)
-  - [Requirements](#requirements)
-  - [Development](#development)
-    - [Setup](#setup)
-    - [Project Structure](#project-structure)
-  - [License](#license)
-  - [Contributing](#contributing)
-  - [Author](#author)
-  - [Related Projects](#related-projects)
+- [Use Cases](#use-cases)
+- [Features](#features)
+- [Installation and requirements](#installation-and-requirements)
+- [Quick Start](#quick-start)
+- [How does `python-package-folder` work?](#how-does-python-package-folder-work)
+- [Python API Usage](#python-api-usage)
+- [Working with sysappend](#working-with-sysappend)
+- [Publishing version Management](#publishing-version-management)
+- [Publishing Packages](#publishing-packages)
+- [Command Line Options](#command-line-options)
+- [API Reference](#api-reference)
+- [Development](#development)
 
 
 ## Use Cases
@@ -157,7 +125,9 @@ This package will automatically:
   - Handles publishing to to PyPI, TestPyPI, or Azure Artifacts, with interactive credential prompts, secure storage support
 
 
-## Installation
+## Installation and requirements
+
+Python >= 3.11 is required.
 
 ```bash
 uv add python-package-folder
@@ -175,13 +145,15 @@ pip install twine
 uv add twine
 ```
 
+**For secure credential storage**: `keyring` is optional but recommended (install with `pip install keyring`)
+
+
 ## Quick Start
 
-### Command Line Usage
+The simplest way to use this package is via the command-line interface
 
-The simplest way to use this package is via the command-line interface:
+**Build/publish a specific subfolder in a repository**
 
-#### Build/publish a specific subfolder in a repository
 Useful for monorepos containing many subfolders that may need publishing as stand-alone packages for external usage.
 
 ```bash
@@ -212,7 +184,54 @@ python-package-folder --project-root /path/to/project --src-dir /path/to/src --b
 
 ## How does `python-package-folder` work?
 
-### Building from Subdirectories
+
+### Build Process
+
+1. **Import Extraction**: Uses Python's AST module to parse all `.py` files and extract import statements
+2. **Classification**: Each import is classified as:
+   - **stdlib**: Standard library modules
+   - **third_party**: Packages installed in site-packages
+   - **local**: Modules within the source directory
+   - **external**: Modules outside source directory but in the project
+   - **ambiguous**: Cannot be resolved
+3. **Dependency Resolution**: For external imports, the tool resolves the file path by checking:
+   - Parent directories of the source directory
+   - Project root and its subdirectories
+   - Relative import paths
+4. **File Copying**: External dependencies are temporarily copied into the source directory
+5. **Build Execution**: Your build command runs with all dependencies in place
+6. **Cleanup**: All temporarily copied files are removed after build
+
+### Publishing Process
+
+1. **Build Verification**: Ensures distribution files exist in the `dist/` directory
+2. **File Filtering**: Automatically filters distribution files to only include those matching the current package name and version (prevents uploading old artifacts)
+3. **Credential Management**: 
+   - Prompts for credentials if not provided
+   - Uses `keyring` for secure storage (if available)
+   - Supports both username/password and API tokens
+   - Auto-detects API tokens and uses `__token__` as username
+4. **Repository Configuration**: Configures the target repository (PyPI, TestPyPI, or Azure)
+5. **Upload**: Uses `twine` to upload distribution files to the repository
+6. **Verification**: Confirms successful upload
+
+### Subfolder Build Process
+
+1. **Project Root Detection**: Searches parent directories for `pyproject.toml`
+2. **Source Directory Detection**: Uses current directory if it contains Python files, otherwise falls back to `project_root/src`
+3. **Package Initialization**: Creates temporary `__init__.py` if subfolder doesn't have one (required for hatchling)
+4. **README Handling**: 
+   - Checks for README files in the subfolder (README.md, README.rst, README.txt, or README)
+   - If found, copies the subfolder README to project root (backing up the original parent README)
+   - If not found, creates a minimal README with just the folder name
+5. **Configuration Creation**: Creates temporary `pyproject.toml` with:
+   - Subfolder-specific package name (derived or custom)
+   - Specified version
+   - Correct package path for hatchling
+6. **Build Execution**: Runs build command with all dependencies in place
+7. **Cleanup**: Restores original `pyproject.toml` and removes temporary `__init__.py`
+
+### How does building from Subdirectories work?
 
 This is useful for monorepos containing many subfolders that may need publishing as stand-alone packages for external usage.  
 The tool automatically detects the project root by searching for `pyproject.toml` in parent directories.  
@@ -265,7 +284,7 @@ python-package-folder --version "1.0.0" --dependency-group "dev" --publish pypi
 
 The specified dependency group will be copied from the parent `pyproject.toml`'s `[dependency-groups]` section into the temporary `pyproject.toml` used for the subfolder build.
 
-### Python API Usage
+## Python API Usage
 
 You can also use the package programmatically:
 
@@ -323,9 +342,10 @@ from folder_structure.utility_folder.some_utility import print_something
 
 The package will correctly identify and copy external dependencies even when they're referenced without full package paths.
 
-## Version Management
+## Publishing version Management
 
 The package supports both dynamic versioning (from git tags) and manual version specification.
+
 
 ### Manual Version Setting
 
@@ -349,6 +369,7 @@ The `--version` option:
 - Validates version format (must be PEP 440 compliant)
 
 **Version Format**: Versions must follow PEP 440 (e.g., `1.2.3`, `1.2.3a1`, `1.2.3.post1`, `1.2.3.dev1`)
+
 
 ### Subfolder Versioning
 
@@ -376,6 +397,7 @@ For subfolder builds:
   - If a README file exists in the subfolder, it will be used instead of the parent README
   - If no README exists in the subfolder, a minimal README with just the folder name will be created
 - **Auto-restore**: Original `pyproject.toml` is restored after build, and temporary `__init__.py` files are removed
+
 
 ### Python API for Version Management
 
@@ -417,6 +439,7 @@ When you use `--version`, the package temporarily switches to static versioning 
 
 The package includes built-in support for publishing to PyPI, TestPyPI, and Azure Artifacts.
 
+
 ### Command Line Publishing
 
 Publish after building:
@@ -445,6 +468,7 @@ python-package-folder --publish pypi --username __token__ --password pypi-xxxxx
 python-package-folder --publish pypi --skip-existing
 ```
 
+
 ### Credentials
 
 **For PyPI/TestPyPI:**
@@ -455,6 +479,7 @@ python-package-folder --publish pypi --skip-existing
 **Common Authentication Issues:**
 - **403 Forbidden**: Usually means you used your username instead of `__token__` with an API token. The tool now auto-detects this.
 - **TestPyPI vs PyPI**: TestPyPI requires a separate account and token from https://test.pypi.org/manage/account/token/
+
 
 ### Smart File Filtering
 
@@ -475,6 +500,7 @@ To get a PyPI API token:
 - **Username**: Your Azure username or feed name
 - **Password**: Personal Access Token (PAT) with packaging permissions
 - **Repository URL**: Your Azure Artifacts feed URL
+
 
 ### Python API Publishing
 
@@ -515,6 +541,7 @@ publisher = Publisher(
 )
 publisher.publish()
 ```
+
 
 ### Credential Storage
 
@@ -699,59 +726,6 @@ config.restore()
 - If no README exists in the subfolder, a minimal README with just the folder name will be created
 - The original parent README is backed up and restored after the build completes
 
-## How It Works
-
-### Build Process
-
-1. **Import Extraction**: Uses Python's AST module to parse all `.py` files and extract import statements
-2. **Classification**: Each import is classified as:
-   - **stdlib**: Standard library modules
-   - **third_party**: Packages installed in site-packages
-   - **local**: Modules within the source directory
-   - **external**: Modules outside source directory but in the project
-   - **ambiguous**: Cannot be resolved
-3. **Dependency Resolution**: For external imports, the tool resolves the file path by checking:
-   - Parent directories of the source directory
-   - Project root and its subdirectories
-   - Relative import paths
-4. **File Copying**: External dependencies are temporarily copied into the source directory
-5. **Build Execution**: Your build command runs with all dependencies in place
-6. **Cleanup**: All temporarily copied files are removed after build
-
-### Publishing Process
-
-1. **Build Verification**: Ensures distribution files exist in the `dist/` directory
-2. **File Filtering**: Automatically filters distribution files to only include those matching the current package name and version (prevents uploading old artifacts)
-3. **Credential Management**: 
-   - Prompts for credentials if not provided
-   - Uses `keyring` for secure storage (if available)
-   - Supports both username/password and API tokens
-   - Auto-detects API tokens and uses `__token__` as username
-4. **Repository Configuration**: Configures the target repository (PyPI, TestPyPI, or Azure)
-5. **Upload**: Uses `twine` to upload distribution files to the repository
-6. **Verification**: Confirms successful upload
-
-### Subfolder Build Process
-
-1. **Project Root Detection**: Searches parent directories for `pyproject.toml`
-2. **Source Directory Detection**: Uses current directory if it contains Python files, otherwise falls back to `project_root/src`
-3. **Package Initialization**: Creates temporary `__init__.py` if subfolder doesn't have one (required for hatchling)
-4. **README Handling**: 
-   - Checks for README files in the subfolder (README.md, README.rst, README.txt, or README)
-   - If found, copies the subfolder README to project root (backing up the original parent README)
-   - If not found, creates a minimal README with just the folder name
-5. **Configuration Creation**: Creates temporary `pyproject.toml` with:
-   - Subfolder-specific package name (derived or custom)
-   - Specified version
-   - Correct package path for hatchling
-6. **Build Execution**: Runs build command with all dependencies in place
-7. **Cleanup**: Restores original `pyproject.toml` and removes temporary `__init__.py`
-
-## Requirements
-
-- Python >= 3.11
-- **For publishing**: `twine` is required (install with `pip install twine`)
-- **For secure credential storage**: `keyring` is optional but recommended (install with `pip install keyring`)
 
 ## Development
 
@@ -772,7 +746,7 @@ uv run pytest
 make lint
 ```
 
-### Project Structure
+### Project Structure 
 
 ```
 python-package-folder/
@@ -792,18 +766,10 @@ python-package-folder/
 └── pyproject.toml
 ```
 
-## License
+## License  <!-- omit from toc -->
 
 MIT License - see LICENSE file for details
 
-## Contributing
+## Contributing  <!-- omit from toc -->
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Author
-
-Alessio Lombardi - [GitHub](https://github.com/alelom)
-
-## Related Projects
-
-- [sysappend](https://pypi.org/project/sysappend/) - Flexible import management for Python projects
