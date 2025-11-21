@@ -93,6 +93,12 @@ def main() -> int:
         action="store_true",
         help="Don't restore dynamic versioning after build (keeps static version)",
     )
+    parser.add_argument(
+        "--exclude-pattern",
+        action="append",
+        dest="exclude_patterns",
+        help="Additional directory/file patterns to exclude from copying (e.g., '_SS', '__sandbox'). Can be specified multiple times.",
+    )
 
     args = parser.parse_args()
 
@@ -122,7 +128,7 @@ def main() -> int:
             else:
                 src_dir = project_root / "src"
 
-        manager = BuildManager(project_root, src_dir)
+        manager = BuildManager(project_root, src_dir, exclude_patterns=args.exclude_patterns)
 
         if args.analyze_only:
             external_deps = manager.prepare_build()

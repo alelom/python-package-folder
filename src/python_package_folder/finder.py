@@ -28,17 +28,21 @@ class ExternalDependencyFinder:
         analyzer: ImportAnalyzer instance for analyzing imports
     """
 
-    def __init__(self, project_root: Path, src_dir: Path) -> None:
+    def __init__(self, project_root: Path, src_dir: Path, exclude_patterns: list[str] | None = None) -> None:
         """
         Initialize the dependency finder.
 
         Args:
             project_root: Root directory of the project
             src_dir: Source directory to analyze
+            exclude_patterns: Additional patterns to exclude (default: common sandbox patterns)
         """
         self.project_root = project_root.resolve()
         self.src_dir = src_dir.resolve()
         self.analyzer = ImportAnalyzer(project_root)
+        # Patterns for directories/files to exclude (sandbox, skip, etc.)
+        default_patterns = ["_SS", "__SS", "_sandbox", "__sandbox", "_skip", "__skip", "_test", "__test__"]
+        self.exclude_patterns = default_patterns + (exclude_patterns or [])
 
     def find_external_dependencies(self, python_files: list[Path]) -> list[ExternalDependency]:
         """
@@ -66,20 +70,38 @@ class ExternalDependencyFinder:
                 if imp.classification == "external" and imp.resolved_path:
                     source_path = imp.resolved_path
 
-                    # For files, check if we should copy the parent directory instead
-                    # (e.g., if importing from utility_folder/some_utility.py, copy utility_folder/)
+                    # Skip excluded paths (sandbox directories, etc.)
+                    if self._should_exclude_path(source_path):
+                        continue
+
+                    # For files, prefer copying just the file unless it's clearly part of a package
+                    # that needs to be copied as a whole (e.g., utility_folder with __init__.py)
                     if source_path.is_file():
-                        # Check if the file is in a directory that should be copied as a whole
                         parent_dir = source_path.parent
                         module_parts = imp.module_name.split(".")
 
-                        # Copy parent directory if:
-                        # 1. Module name has multiple parts (suggesting it's a package structure)
-                        # 2. Parent is outside src_dir
-                        # 3. Parent doesn't contain src_dir (to avoid recursive copies)
-                        # 4. Parent is not the project root
+                        # Only copy parent directory if:
+                        # 1. The parent directory is not excluded
+                        # 2. Either it's a package (has __init__.py) OR it's a small directory (few files)
+                        # 3. Module name has multiple parts (suggesting it's a package structure)
+                        # 4. Parent is outside src_dir
+                        # 5. Parent doesn't contain src_dir (to avoid recursive copies)
+                        # 6. Parent is not the project root
+                        parent_is_package = (parent_dir / "__init__.py").exists()
+                        # Count Python files in parent directory (excluding excluded subdirs)
+                        try:
+                            py_files_in_parent = [
+                                f for f in parent_dir.rglob("*.py")
+                                if not self._should_exclude_path(f) and f.is_file()
+                            ]
+                            parent_is_small = len(py_files_in_parent) <= 10  # Small directory threshold
+                        except Exception:
+                            parent_is_small = False
+                        
                         should_copy_dir = (
-                            len(module_parts) > 2  # Has at least package.module structure
+                            not self._should_exclude_path(parent_dir)
+                            and (parent_is_package or parent_is_small)  # Package or small directory
+                            and len(module_parts) > 2  # Has at least package.module structure
                             and not parent_dir.is_relative_to(self.src_dir)
                             and not self.src_dir.is_relative_to(parent_dir)
                             and parent_dir != self.project_root
@@ -91,6 +113,7 @@ class ExternalDependencyFinder:
                             track_path = parent_dir
                             source_path = parent_dir
                         else:
+                            # Copy just the file
                             track_path = source_path
                     elif source_path.is_dir():
                         # Don't copy directories that contain src_dir
@@ -163,6 +186,24 @@ class ExternalDependencyFinder:
             return target
 
         return None
+
+    def _should_exclude_path(self, path: Path) -> bool:
+        """
+        Check if a path should be excluded from copying.
+
+        Excludes paths that match common sandbox/skip patterns like _SS, __SS, etc.
+
+        Args:
+            path: Path to check
+
+        Returns:
+            True if the path should be excluded, False otherwise
+        """
+        # Check each component of the path
+        for part in path.parts:
+            if any(part.startswith(pattern) or part == pattern for pattern in self.exclude_patterns):
+                return True
+        return False
 
     def _find_main_package(self) -> Path | None:
         """

@@ -42,13 +42,14 @@ class BuildManager:
         copied_dirs: List of directory paths that were copied (for cleanup)
     """
 
-    def __init__(self, project_root: Path, src_dir: Path | None = None) -> None:
+    def __init__(self, project_root: Path, src_dir: Path | None = None, exclude_patterns: list[str] | None = None) -> None:
         """
         Initialize the build manager.
 
         Args:
             project_root: Root directory of the project
             src_dir: Source directory (defaults to project_root/src, or current dir if it has Python files)
+            exclude_patterns: Additional patterns to exclude from copying (e.g., ['_SS', '__sandbox'])
 
         Raises:
             ValueError: If the source directory does not exist or is invalid
@@ -72,6 +73,11 @@ class BuildManager:
 
         if not self.src_dir.is_dir():
             raise ValueError(f"Source path is not a directory: {self.src_dir}")
+
+        self.copied_files: list[Path] = []
+        self.copied_dirs: list[Path] = []
+        self.exclude_patterns = exclude_patterns or []
+        self.finder = ExternalDependencyFinder(self.project_root, self.src_dir, exclude_patterns=exclude_patterns)
 
         # Check if it's a valid Python package directory
         if not any(self.src_dir.glob("*.py")) and not (self.src_dir / "__init__.py").exists():
@@ -156,13 +162,12 @@ class BuildManager:
             List of ExternalDependency objects that were copied
         """
         analyzer = ImportAnalyzer(self.project_root)
-        finder = ExternalDependencyFinder(self.project_root, self.src_dir)
 
         # Find all Python files in src/
         python_files = analyzer.find_all_python_files(self.src_dir)
 
-        # Find external dependencies
-        external_deps = finder.find_external_dependencies(python_files)
+        # Find external dependencies using the configured finder
+        external_deps = self.finder.find_external_dependencies(python_files)
 
         # Copy external dependencies
         for dep in external_deps:
@@ -225,11 +230,48 @@ class BuildManager:
             elif source.is_dir():
                 if target.exists():
                     shutil.rmtree(target)
-                shutil.copytree(source, target)
+                # Use custom copy function that excludes certain patterns
+                self._copytree_excluding(source, target)
                 self.copied_dirs.append(target)
                 print(f"Copied external directory: {source} -> {target}")
         except Exception as e:
             print(f"Error copying {source} to {target}: {e}", file=sys.stderr)
+
+    def _copytree_excluding(self, src: Path, dst: Path) -> None:
+        """
+        Copy a directory tree, excluding certain patterns.
+
+        Excludes directories matching patterns like _SS, __SS, _sandbox, etc.
+
+        Args:
+            src: Source directory
+            dst: Destination directory
+        """
+        default_patterns = ["_SS", "__SS", "_sandbox", "__sandbox", "_skip", "__skip", "_test", "__test__"]
+        exclude_patterns = default_patterns + self.exclude_patterns
+        
+        def should_exclude(path: Path) -> bool:
+            """Check if a path should be excluded."""
+            for part in path.parts:
+                if any(part.startswith(pattern) or part == pattern for pattern in exclude_patterns):
+                    return True
+            return False
+
+        # Create destination directory
+        dst.mkdir(parents=True, exist_ok=True)
+
+        # Copy files and subdirectories, excluding patterns
+        for item in src.iterdir():
+            if should_exclude(item):
+                continue
+            
+            src_item = src / item.name
+            dst_item = dst / item.name
+
+            if src_item.is_file():
+                shutil.copy2(src_item, dst_item)
+            elif src_item.is_dir():
+                self._copytree_excluding(src_item, dst_item)
 
     def _report_ambiguous_imports(self, python_files: list[Path]) -> None:
         """
