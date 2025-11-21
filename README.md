@@ -1,5 +1,8 @@
 # python-package-folder
 
+[![Tests](https://github.com/alelom/python-package-folder/actions/workflows/ci.yml/badge.svg)](https://github.com/alelom/python-package-folder/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/alelom/python-package-folder/branch/main/graph/badge.svg)](https://codecov.io/gh/alelom/python-package-folder)
+
 Python package to automatically analyze, detect, and manage external dependencies when building Python packages. This tool recursively parses all Python files in your project, identifies imports from outside the main package directory, and temporarily copies them into the source directory during the build process.
 
 ## Features
