@@ -227,6 +227,7 @@ python-package-folder --project-root /path/to/project --src-dir /path/to/src --b
    - If found, copies the subfolder README to project root (backing up the original parent README)
    - If not found, creates a minimal README with just the folder name
 5. **Configuration Creation**: Creates temporary `pyproject.toml` with:
+   - `[build-system]` section using hatchling (replaces any existing build-system configuration)
    - Subfolder-specific package name (derived or custom)
    - Specified version
    - Correct package path for hatchling
@@ -258,8 +259,9 @@ The tool automatically:
 - Uses the current directory as the source directory if it contains Python files
 - Falls back to `project_root/src` if the current directory isn't suitable
 - **For subfolder builds**: Handles `pyproject.toml` configuration:
-  - **If `pyproject.toml` exists in subfolder**: Uses that file (copies it to project root temporarily)
+  - **If `pyproject.toml` exists in subfolder**: Uses that file (copies it to project root temporarily, adjusting package paths and ensuring `[build-system]` uses hatchling)
   - **If no `pyproject.toml` in subfolder**: Creates a temporary `pyproject.toml` with:
+    - `[build-system]` section using hatchling (always uses hatchling, even if parent uses setuptools)
     - Package name derived from the subfolder name (e.g., `empty_drawing_detection` → `empty-drawing-detection`)
     - Version from `--version` argument (defaults to `0.0.0` with a warning if not provided)
     - Proper package path configuration for hatchling
@@ -791,11 +793,11 @@ config.restore()
 ```
 
 **Methods:**
-- `create_temp_pyproject() -> Path`: Use subfolder's `pyproject.toml` if it exists, otherwise create temporary `pyproject.toml` with subfolder-specific configuration
+- `create_temp_pyproject() -> Path`: Use subfolder's `pyproject.toml` if it exists (adjusting package paths and ensuring `[build-system]` uses hatchling), otherwise create temporary `pyproject.toml` with subfolder-specific configuration including `[build-system]` section using hatchling
 - `restore() -> None`: Restore original `pyproject.toml` and clean up temporary files
 
 **Note**: This class automatically:
-- **pyproject.toml handling**: If a `pyproject.toml` exists in the subfolder, it will be used (copied to project root temporarily). Otherwise, creates a temporary one from the parent configuration.
+- **pyproject.toml handling**: If a `pyproject.toml` exists in the subfolder, it will be used (copied to project root temporarily with adjusted package paths). Otherwise, creates a temporary one from the parent configuration. In both cases, the `[build-system]` section is always set to use hatchling, replacing any existing build-system configuration.
 - **README handling**: If a README exists in the subfolder, it will be used instead of the parent README. If no README exists in the subfolder, a minimal README with just the folder name will be created. The original parent README is backed up and restored after the build completes.
 - **Package initialization**: Creates `__init__.py` files if needed to make subfolders valid Python packages.
 

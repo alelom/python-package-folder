@@ -122,7 +122,8 @@ def main() -> int:
             src_dir = Path(args.src_dir).resolve()
         else:
             # Auto-detect: use current directory if it has Python files, otherwise use project_root/src
-            src_dir = find_source_directory(project_root)
+            current_dir = Path.cwd()
+            src_dir = find_source_directory(project_root, current_dir=current_dir)
             if src_dir:
                 print(f"Auto-detected source directory: {src_dir}")
             else:

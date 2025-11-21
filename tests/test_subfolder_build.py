@@ -584,6 +584,11 @@ class TestSubfolderBuildTemporaryPyprojectCreation:
 
         # Verify dynamic versioning is removed
         assert 'dynamic = ["version"]' not in content
+
+        # Verify build-system section is added (required for hatchling)
+        assert "[build-system]" in content
+        assert 'requires = ["hatchling"]' in content
+        assert 'build-backend = "hatchling.build"' in content
         assert "[tool.hatch.version]" not in content
         assert "[tool.uv-dynamic-versioning]" not in content
 
@@ -648,3 +653,71 @@ class TestSubfolderBuildTemporaryPyprojectCreation:
         restored_content = (project_root / "pyproject.toml").read_text()
         assert restored_content == original_content
         assert 'name = "test-package"' in restored_content
+
+    def test_build_system_section_replaces_setuptools(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that build-system section replaces existing setuptools configuration."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Modify parent pyproject.toml to have setuptools build-system
+        pyproject_path = project_root / "pyproject.toml"
+        original_content = pyproject_path.read_text()
+        modified_content = (
+            original_content
+            + '\n[build-system]\nrequires = ["setuptools"]\nbuild-backend = "setuptools.build_meta"\n'
+        )
+        pyproject_path.write_text(modified_content)
+
+        try:
+            config = SubfolderBuildConfig(
+                project_root=project_root,
+                src_dir=subfolder,
+                version="1.0.0",
+            )
+
+            pyproject_path = config.create_temp_pyproject()
+            content = pyproject_path.read_text()
+
+            # Verify build-system section uses hatchling, not setuptools
+            assert "[build-system]" in content
+            assert 'requires = ["hatchling"]' in content
+            assert 'build-backend = "hatchling.build"' in content
+            assert "setuptools" not in content or 'build-backend = "setuptools' not in content
+
+            config.restore()
+        finally:
+            # Restore original content
+            pyproject_path.write_text(original_content)
+
+    def test_build_system_section_with_subfolder_pyproject(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that build-system section is added when using subfolder's pyproject.toml."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Create pyproject.toml in subfolder without build-system
+        subfolder_pyproject_content = """[project]
+name = "subfolder-package"
+version = "3.0.0"
+description = "Subfolder package"
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject_content)
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        pyproject_path = config.create_temp_pyproject()
+        content = pyproject_path.read_text()
+
+        # Verify build-system section is added
+        assert "[build-system]" in content
+        assert 'requires = ["hatchling"]' in content
+        assert 'build-backend = "hatchling.build"' in content
+
+        config.restore()

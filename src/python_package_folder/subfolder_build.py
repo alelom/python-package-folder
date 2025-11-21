@@ -30,8 +30,11 @@ class SubfolderBuildConfig:
     Manages temporary build configuration for subfolder builds.
 
     When building a subfolder as a separate package, this class:
-    - Uses the subfolder's pyproject.toml if it exists
+    - Uses the subfolder's pyproject.toml if it exists (adjusts package paths and ensures
+      [build-system] uses hatchling)
     - Otherwise creates a temporary pyproject.toml with the appropriate package name and version
+    - Always ensures [build-system] section uses hatchling (replaces any existing build-system
+      configuration from parent or subfolder)
     - Handles README files similarly (uses subfolder README if present)
     """
 
@@ -111,13 +114,96 @@ class SubfolderBuildConfig:
         # If it's a package or has subpackages, return the path
         return packages_path, [packages_path] if packages_path else []
 
+    def _adjust_subfolder_pyproject_packages_path(self, content: str) -> str:
+        """
+        Adjust packages path in subfolder pyproject.toml to be relative to project root.
+
+        When a subfolder's pyproject.toml is copied to project root, the packages path
+        needs to be adjusted to point to the subfolder relative to the project root.
+
+        Args:
+            content: Content of the subfolder's pyproject.toml
+
+        Returns:
+            Adjusted content with correct packages path
+        """
+        # Get the correct packages path relative to project root
+        _, package_dirs = self._get_package_structure()
+        if not package_dirs:
+            # No adjustment needed if we can't determine the path
+            return content
+
+        correct_packages_path = package_dirs[0]
+        lines = content.split("\n")
+        result = []
+        in_hatch_build = False
+        packages_set = False
+
+        for line in lines:
+            # Detect hatch build section
+            if line.strip().startswith("[tool.hatch.build.targets.wheel]"):
+                in_hatch_build = True
+                result.append(line)
+                continue
+            elif line.strip().startswith("[") and in_hatch_build:
+                # End of hatch build section, add packages if not set
+                if not packages_set and correct_packages_path:
+                    packages_str = f'"{correct_packages_path}"'
+                    result.append(f"packages = [{packages_str}]")
+                in_hatch_build = False
+                result.append(line)
+            elif in_hatch_build:
+                # Modify packages path if found
+                if re.match(r"^\s*packages\s*=", line):
+                    packages_str = f'"{correct_packages_path}"'
+                    result.append(f"packages = [{packages_str}]")
+                    packages_set = True
+                    continue
+                # Keep other lines in hatch build section
+                result.append(line)
+            else:
+                result.append(line)
+
+        # Add packages if we're still in hatch build section and haven't set it
+        if in_hatch_build and not packages_set and correct_packages_path:
+            packages_str = f'"{correct_packages_path}"'
+            result.append(f"packages = [{packages_str}]")
+
+        # Ensure build-system section exists (required for hatchling)
+        # Check if build-system section exists in the result
+        has_build_system = any(line.strip().startswith("[build-system]") for line in result)
+        if not has_build_system:
+            # Insert build-system at the very beginning of the file
+            build_system_lines = [
+                "[build-system]",
+                'requires = ["hatchling"]',
+                'build-backend = "hatchling.build"',
+                "",
+            ]
+            result = build_system_lines + result
+
+        # Ensure hatch build section exists if packages path is needed
+        if not packages_set and correct_packages_path:
+            # Check if we need to add the section
+            if "[tool.hatch.build.targets.wheel]" not in content:
+                result.append("")
+                result.append("[tool.hatch.build.targets.wheel]")
+                packages_str = f'"{correct_packages_path}"'
+                result.append(f"packages = [{packages_str}]")
+
+        return "\n".join(result)
+
     def create_temp_pyproject(self) -> Path | None:
         """
         Create a temporary pyproject.toml for the subfolder build.
 
-        If a pyproject.toml exists in the subfolder, it will be used instead of creating
-        a new one. Otherwise, creates a pyproject.toml in the project root based on the
-        parent pyproject.toml with the appropriate package name and version.
+        If a pyproject.toml exists in the subfolder, it will be used (copied to project root
+        with adjusted package paths and ensuring [build-system] uses hatchling). Otherwise,
+        creates a pyproject.toml in the project root based on the parent pyproject.toml with
+        the appropriate package name and version.
+
+        The [build-system] section is always set to use hatchling, even if the parent or
+        subfolder pyproject.toml uses a different build backend (e.g., setuptools).
 
         Returns:
             Path to the pyproject.toml file (either from subfolder or created temporary),
@@ -149,8 +235,13 @@ class SubfolderBuildConfig:
                 shutil.copy2(original_pyproject, backup_path)
                 self.original_pyproject_backup = backup_path
 
-            # Copy subfolder pyproject.toml to project root
-            shutil.copy2(subfolder_pyproject, original_pyproject)
+            # Read and adjust the subfolder pyproject.toml
+            subfolder_content = subfolder_pyproject.read_text(encoding="utf-8")
+            # Adjust packages path to be relative to project root
+            adjusted_content = self._adjust_subfolder_pyproject_packages_path(subfolder_content)
+
+            # Write adjusted content to project root
+            original_pyproject.write_text(adjusted_content, encoding="utf-8")
             self.temp_pyproject = original_pyproject
 
             # Handle README file
@@ -259,6 +350,7 @@ class SubfolderBuildConfig:
         skip_uv_dynamic = False
         in_hatch_build = False
         packages_set = False
+        build_system_set = False
 
         # Get package structure
         packages_path, package_dirs = self._get_package_structure()
@@ -266,6 +358,19 @@ class SubfolderBuildConfig:
             package_dirs = []
 
         for _i, line in enumerate(lines):
+            # Skip build-system section - we'll add our own for subfolder builds
+            if line.strip().startswith("[build-system]"):
+                build_system_set = True
+                continue  # Skip the [build-system] line
+            elif build_system_set and line.strip().startswith("["):
+                # End of build-system section
+                build_system_set = False
+                result.append(line)
+                continue
+            elif build_system_set:
+                # Skip build-system content - we'll add our own
+                continue
+
             # Skip hatch versioning and uv-dynamic-versioning sections
             if line.strip().startswith("[tool.hatch.version]"):
                 skip_hatch_version = True
@@ -360,6 +465,19 @@ class SubfolderBuildConfig:
         if in_hatch_build and not packages_set and package_dirs:
             packages_str = ", ".join(f'"{p}"' for p in package_dirs)
             result.append(f"packages = [{packages_str}]")
+
+        # Ensure build-system section exists (required for hatchling)
+        # Check if build-system section exists in the result
+        has_build_system = any(line.strip().startswith("[build-system]") for line in result)
+        if not has_build_system:
+            # Insert build-system at the very beginning of the file
+            build_system_lines = [
+                "[build-system]",
+                'requires = ["hatchling"]',
+                'build-backend = "hatchling.build"',
+                "",
+            ]
+            result = build_system_lines + result
 
         # Ensure packages is always set for subfolder builds
         if not packages_set and package_dirs:

@@ -63,7 +63,8 @@ def find_source_directory(project_root: Path, current_dir: Path | None = None) -
     project_root = project_root.resolve()
 
     # Check if current directory is a subdirectory with Python files
-    if current_dir.is_relative_to(project_root) or current_dir == project_root:
+    # Prioritize current directory if it's within the project and has Python files
+    if current_dir.is_relative_to(project_root) and current_dir != project_root:
         python_files = list(current_dir.glob("*.py"))
         if python_files:
             # Current directory has Python files, use it as source
@@ -74,10 +75,11 @@ def find_source_directory(project_root: Path, current_dir: Path | None = None) -
     if src_dir.exists() and src_dir.is_dir():
         return src_dir
 
-    # Check if project_root itself has Python files
-    python_files = list(project_root.glob("*.py"))
-    if python_files:
-        return project_root
+    # Only check project_root if current_dir is the project_root
+    if current_dir == project_root:
+        python_files = list(project_root.glob("*.py"))
+        if python_files:
+            return project_root
 
     return None
 

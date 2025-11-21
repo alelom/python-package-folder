@@ -45,13 +45,55 @@ class ImportAnalyzer:
         """
         Recursively find all Python files in a directory.
 
+        Excludes common directories like .venv, venv, __pycache__, etc.
+
         Args:
             directory: Directory to search for Python files
 
         Returns:
             List of paths to all .py files found in the directory tree
         """
-        return [path for path in directory.rglob("*.py") if path.is_file()]
+        exclude_patterns = {
+            ".venv",
+            "venv",
+            "__pycache__",
+            ".git",
+            ".pytest_cache",
+            ".mypy_cache",
+            "node_modules",
+            ".tox",
+            "dist",
+            "build",
+        }
+
+        python_files = []
+        for path in directory.rglob("*.py"):
+            if not path.is_file():
+                continue
+
+            # Check if any part of the path matches exclusion patterns
+            should_exclude = False
+            for part in path.parts:
+                # Check exact matches
+                if part in exclude_patterns:
+                    should_exclude = True
+                    break
+                # Check if part starts with excluded pattern or contains .egg-info
+                for pattern in exclude_patterns:
+                    if part.startswith(pattern):
+                        should_exclude = True
+                        break
+                # Also exclude .egg-info directories
+                if ".egg-info" in part:
+                    should_exclude = True
+                    break
+                if should_exclude:
+                    break
+
+            if not should_exclude:
+                python_files.append(path)
+
+        return python_files
 
     def extract_imports(self, file_path: Path) -> list[ImportInfo]:
         """
