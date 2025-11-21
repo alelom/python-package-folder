@@ -344,6 +344,7 @@ class BuildManager:
         version: str | None = None,
         restore_versioning: bool = True,
         package_name: str | None = None,
+        dependency_group: str | None = None,
     ) -> None:
         """
         Build and publish the package in one operation.
@@ -366,6 +367,7 @@ class BuildManager:
             version: Manual version to set before building (PEP 440 format)
             restore_versioning: If True, restore dynamic versioning after build
             package_name: Package name for subfolder builds (default: derived from src_dir name)
+            dependency_group: Name of dependency group to copy from parent pyproject.toml
 
         Example:
             ```python
@@ -399,6 +401,7 @@ class BuildManager:
                     src_dir=self.src_dir,
                     package_name=package_name,
                     version=version,
+                    dependency_group=dependency_group,
                 )
                 subfolder_config.create_temp_pyproject()
             elif version:

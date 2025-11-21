@@ -84,6 +84,11 @@ def main() -> int:
         help="Package name for subfolder builds (default: derived from source directory name)",
     )
     parser.add_argument(
+        "--dependency-group",
+        dest="dependency_group",
+        help="Dependency group name from parent pyproject.toml to include in subfolder build",
+    )
+    parser.add_argument(
         "--no-restore-versioning",
         action="store_true",
         help="Don't restore dynamic versioning after build (keeps static version)",
@@ -163,6 +168,7 @@ def main() -> int:
                 version=args.version,
                 restore_versioning=not args.no_restore_versioning,
                 package_name=args.package_name,
+                dependency_group=args.dependency_group,
             )
         else:
             # Handle version setting even without publishing
@@ -177,6 +183,7 @@ def main() -> int:
                         src_dir=src_dir,
                         package_name=package_name,
                         version=args.version,
+                        dependency_group=args.dependency_group,
                     )
                     try:
                         subfolder_config.create_temp_pyproject()

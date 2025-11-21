@@ -96,7 +96,19 @@ The tool automatically:
 # Build a subfolder as a separate package
 cd tests/folder_structure/subfolder_to_build
 python-package-folder --version "0.1.0" --package-name "my-subfolder-package" --publish pypi
+
+# Build with a specific dependency group from parent pyproject.toml
+python-package-folder --version "0.1.0" --dependency-group "dev" --publish pypi
 ```
+
+**Dependency Groups**: When building a subfolder, you can specify a dependency group from the parent `pyproject.toml` to include in the subfolder's build configuration. This allows subfolders to inherit specific dependencies from the parent project:
+
+```bash
+# Use the 'dev' dependency group from parent pyproject.toml
+python-package-folder --version "1.0.0" --dependency-group "dev" --publish pypi
+```
+
+The specified dependency group will be copied from the parent `pyproject.toml`'s `[dependency-groups]` section into the temporary `pyproject.toml` used for the subfolder build.
 
 ### Python API Usage
 
@@ -233,6 +245,7 @@ For subfolder builds:
   - Custom package name (from `--package-name` or derived)
   - Specified version
   - Correct package path for hatchling
+  - Dependency group from parent (if `--dependency-group` is specified)
 - **Package initialization**: Automatically creates `__init__.py` if the subfolder doesn't have one (required for hatchling)
 - **Auto-restore**: Original `pyproject.toml` is restored after build, and temporary `__init__.py` files are removed
 
@@ -417,6 +430,9 @@ options:
   --package-name PACKAGE_NAME
                         Package name for subfolder builds (default: derived from
                         source directory name)
+  --dependency-group DEPENDENCY_GROUP
+                        Dependency group name from parent pyproject.toml to include
+                        in subfolder build
   --no-restore-versioning
                         Don't restore dynamic versioning after build
 ```

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -35,6 +36,7 @@ class SubfolderBuildConfig:
         src_dir: Path,
         package_name: str | None = None,
         version: str | None = None,
+        dependency_group: str | None = None,
     ) -> None:
         """
         Initialize subfolder build configuration.
@@ -44,11 +46,13 @@ class SubfolderBuildConfig:
             src_dir: Source directory being built (subfolder)
             package_name: Name for the subfolder package (default: derived from src_dir name)
             version: Version for the subfolder package (required if building subfolder)
+            dependency_group: Name of dependency group to copy from parent pyproject.toml
         """
         self.project_root = project_root.resolve()
         self.src_dir = src_dir.resolve()
         self.package_name = package_name or self._derive_package_name()
         self.version = version
+        self.dependency_group = dependency_group
         self.temp_pyproject: Path | None = None
         self.original_pyproject_backup: Path | None = None
         self._temp_init_created = False
@@ -143,6 +147,19 @@ class SubfolderBuildConfig:
         else:
             data = None
 
+        # Extract dependency group from parent if specified
+        parent_dependency_group = None
+        if data and self.dependency_group and "dependency-groups" in data:
+            if self.dependency_group in data["dependency-groups"]:
+                parent_dependency_group = {
+                    self.dependency_group: data["dependency-groups"][self.dependency_group]
+                }
+            else:
+                print(
+                    f"Warning: Dependency group '{self.dependency_group}' not found in parent pyproject.toml",
+                    file=sys.stderr,
+                )
+
         if data:
             # Modify using parsed data
             if "project" in data:
@@ -155,11 +172,18 @@ class SubfolderBuildConfig:
                         data["project"]["dynamic"].remove("version")
                     data["project"]["version"] = self.version
 
+            # Add dependency group if specified
+            if parent_dependency_group:
+                if "dependency-groups" not in data:
+                    data["dependency-groups"] = {}
+                # Add the specified dependency group from parent
+                data["dependency-groups"].update(parent_dependency_group)
+
             # For now, use string manipulation (tomli-w not in stdlib)
-            modified_content = self._modify_pyproject_string(original_content)
+            modified_content = self._modify_pyproject_string(original_content, parent_dependency_group)
         else:
             # Use string manipulation
-            modified_content = self._modify_pyproject_string(original_content)
+            modified_content = self._modify_pyproject_string(original_content, parent_dependency_group)
 
         # Write the modified content
         original_pyproject.write_text(modified_content, encoding="utf-8")
@@ -167,7 +191,7 @@ class SubfolderBuildConfig:
 
         return original_pyproject
 
-    def _modify_pyproject_string(self, content: str) -> str:
+    def _modify_pyproject_string(self, content: str, dependency_group: dict[str, list[str]] | None = None) -> str:
         """Modify pyproject.toml content using string manipulation."""
         lines = content.split("\n")
         result = []
@@ -289,6 +313,49 @@ class SubfolderBuildConfig:
                 result.append("[tool.hatch.build.targets.wheel]")
             packages_str = ", ".join(f'"{p}"' for p in package_dirs)
             result.append(f"packages = [{packages_str}]")
+
+        # Add dependency group if specified
+        if dependency_group:
+            # Find where to insert dependency-groups section
+            # Usually after [project] section or at the end
+            insert_index = len(result)
+            for i, line in enumerate(result):
+                if line.strip().startswith("[dependency-groups]"):
+                    # Update existing dependency-groups section
+                    insert_index = i
+                    break
+                elif line.strip().startswith("[") and i > 0:
+                    # Insert before the last section (usually before [tool.*] sections)
+                    if not line.strip().startswith("[tool."):
+                        insert_index = i
+                        break
+
+            # Format dependency group
+            if insert_index < len(result) and result[insert_index].strip().startswith("[dependency-groups]"):
+                # Replace existing section
+                dep_lines = ["[dependency-groups]"]
+                for group_name, deps in dependency_group.items():
+                    dep_lines.append(f'{group_name} = [')
+                    for dep in deps:
+                        dep_lines.append(f'    "{dep}",')
+                    dep_lines.append(']')
+                    dep_lines.append("")
+                
+                # Find end of existing dependency-groups section
+                end_index = insert_index + 1
+                while end_index < len(result) and not result[end_index].strip().startswith("["):
+                    end_index += 1
+                
+                result[insert_index:end_index] = dep_lines
+            else:
+                # Insert new section
+                dep_lines = ["", "[dependency-groups]"]
+                for group_name, deps in dependency_group.items():
+                    dep_lines.append(f'{group_name} = [')
+                    for dep in deps:
+                        dep_lines.append(f'    "{dep}",')
+                    dep_lines.append(']')
+                result[insert_index:insert_index] = dep_lines
 
         return "\n".join(result)
 
