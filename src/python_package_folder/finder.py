@@ -74,33 +74,22 @@ class ExternalDependencyFinder:
                     if self._should_exclude_path(source_path):
                         continue
 
-                    # For files, prefer copying just the file unless it's clearly part of a package
-                    # that needs to be copied as a whole (e.g., utility_folder with __init__.py)
+                    # For files, check if we should copy the parent directory
+                    # Copy parent directory if:
+                    # 1. It's a package (has __init__.py), OR
+                    # 2. Files from it are actually imported (which is the case here since source_path is a file)
                     if source_path.is_file():
                         parent_dir = source_path.parent
                         module_parts = imp.module_name.split(".")
 
-                        # Only copy parent directory if:
-                        # 1. The parent directory is not excluded
-                        # 2. Either it's a package (has __init__.py) OR it's a small directory (few files)
-                        # 3. Module name has multiple parts (suggesting it's a package structure)
-                        # 4. Parent is outside src_dir
-                        # 5. Parent doesn't contain src_dir (to avoid recursive copies)
-                        # 6. Parent is not the project root
+                        # Check if parent directory should be copied
                         parent_is_package = (parent_dir / "__init__.py").exists()
-                        # Count Python files in parent directory (excluding excluded subdirs)
-                        try:
-                            py_files_in_parent = [
-                                f for f in parent_dir.rglob("*.py")
-                                if not self._should_exclude_path(f) and f.is_file()
-                            ]
-                            parent_is_small = len(py_files_in_parent) <= 10  # Small directory threshold
-                        except Exception:
-                            parent_is_small = False
+                        # Files in parent directory are used (source_path is a file being imported)
+                        files_in_parent_are_used = True  # Since we're processing an import of a file from this parent
                         
                         should_copy_dir = (
                             not self._should_exclude_path(parent_dir)
-                            and (parent_is_package or parent_is_small)  # Package or small directory
+                            and (parent_is_package or files_in_parent_are_used)  # Package OR files are used
                             and len(module_parts) > 2  # Has at least package.module structure
                             and not parent_dir.is_relative_to(self.src_dir)
                             and not self.src_dir.is_relative_to(parent_dir)
