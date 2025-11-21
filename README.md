@@ -6,6 +6,135 @@
 Easily build and publish any target folder in a repository, including subfolders of a monorepo.
 Together with [sysappend](https://pypi.org/project/sysappend/), this library makes relative imports, flexible import management, and package publishing a breeze.
 
+- [python-package-folder](#python-package-folder)
+  - [Use Cases](#use-cases)
+    - [1) Publishing a Subfolder from src/ in a Monorepo](#1-publishing-a-subfolder-from-src-in-a-monorepo)
+    - [2) Building Packages with Shared Code](#2-building-packages-with-shared-code)
+  - [Features](#features)
+  - [Installation](#installation)
+  - [Quick Start](#quick-start)
+    - [Command Line Usage](#command-line-usage)
+      - [Build/publish a specific subfolder in a repository](#buildpublish-a-specific-subfolder-in-a-repository)
+  - [How does `python-package-folder` work?](#how-does-python-package-folder-work)
+    - [Building from Subdirectories](#building-from-subdirectories)
+    - [Python API Usage](#python-api-usage)
+  - [Working with sysappend](#working-with-sysappend)
+  - [Version Management](#version-management)
+    - [Manual Version Setting](#manual-version-setting)
+    - [Subfolder Versioning](#subfolder-versioning)
+    - [Python API for Version Management](#python-api-for-version-management)
+    - [Dynamic Versioning](#dynamic-versioning)
+  - [Publishing Packages](#publishing-packages)
+    - [Command Line Publishing](#command-line-publishing)
+    - [Credentials](#credentials)
+    - [Smart File Filtering](#smart-file-filtering)
+    - [Python API Publishing](#python-api-publishing)
+    - [Credential Storage](#credential-storage)
+  - [Command Line Options](#command-line-options)
+  - [API Reference](#api-reference)
+    - [BuildManager](#buildmanager)
+    - [ImportAnalyzer](#importanalyzer)
+    - [ExternalDependencyFinder](#externaldependencyfinder)
+    - [Publisher](#publisher)
+    - [VersionManager](#versionmanager)
+    - [SubfolderBuildConfig](#subfolderbuildconfig)
+  - [How It Works](#how-it-works)
+    - [Build Process](#build-process)
+    - [Publishing Process](#publishing-process)
+    - [Subfolder Build Process](#subfolder-build-process)
+  - [Requirements](#requirements)
+  - [Development](#development)
+    - [Setup](#setup)
+    - [Project Structure](#project-structure)
+  - [License](#license)
+  - [Contributing](#contributing)
+  - [Author](#author)
+  - [Related Projects](#related-projects)
+
+
+## Use Cases
+
+### 1) Publishing a Subfolder from src/ in a Monorepo
+
+If you have a monorepo structure with multiple packages in `src/`:
+
+```
+project/
+├── src/
+│   ├── core_package/
+│   │   ├── __init__.py
+│   │   ├── core.py
+│   │   └── README.md
+│   ├── api_package/
+│   │   ├── __init__.py
+│   │   ├── api.py
+│   │   └── README.md
+│   └── utils_package/
+│       ├── __init__.py
+│       ├── utils.py
+│       └── README.md
+├── shared/
+│   └── common.py
+└── pyproject.toml
+```
+
+You can build and publish any subfolder from `src/` as a standalone package:
+
+```bash
+# Navigate to the subfolder you want to publish
+cd src/api_package
+
+# Build and publish to TestPyPI with version 1.2.0
+python-package-folder --publish testpypi --version 1.2.0
+
+# Or publish to PyPI with a custom package name
+python-package-folder --publish pypi --version 1.2.0 --package-name "my-api-package"
+
+# Include a specific dependency group from the parent pyproject.toml
+python-package-folder --publish pypi --version 1.2.0 --dependency-group "dev"
+```
+
+The tool will automatically:
+1. Detect the project root (where `pyproject.toml` is located)
+2. Use `src/api_package` as the source directory
+3. Copy any external dependencies (like `shared/common.py`) into the package before building
+4. Use the subfolder's README if present, or create a minimal one
+5. Create a temporary `pyproject.toml` with the subfolder's package name and version
+6. Build and publish the package
+7. Clean up all temporary files and restore the original `pyproject.toml`
+
+This is especially useful for monorepos where you want to publish individual packages independently while sharing common code.
+
+
+### 2) Building Packages with Shared Code
+
+If your project structure looks like this:
+
+```
+project/
+├── src/
+│   └── my_package/
+│       └── main.py
+├── shared/
+│   ├── utils.py
+│   └── helpers.py
+└── pyproject.toml
+```
+
+And `main.py` imports from `shared/`:
+
+```python
+from shared.utils import some_function
+from shared.helpers import Helper
+```
+
+This package will automatically:
+1. Detect that `shared/` is outside `src/`
+2. Copy `shared/` into `src/` before building
+3. Build your package with all dependencies included
+4. Clean up the copied files after build
+
+
 ## Features
 
 - **Subfolder Build Support**: Build subfolders as separate packages with automatic project root detection
@@ -180,37 +309,7 @@ def build_command():
 manager.run_build(build_command)
 ```
 
-## Use Cases
-
-### Building Packages with Shared Code
-
-If your project structure looks like this:
-
-```
-project/
-├── src/
-│   └── my_package/
-│       └── main.py
-├── shared/
-│   ├── utils.py
-│   └── helpers.py
-└── pyproject.toml
-```
-
-And `main.py` imports from `shared/`:
-
-```python
-from shared.utils import some_function
-from shared.helpers import Helper
-```
-
-This package will automatically:
-1. Detect that `shared/` is outside `src/`
-2. Copy `shared/` into `src/` before building
-3. Build your package with all dependencies included
-4. Clean up the copied files after build
-
-### Working with sysappend
+## Working with sysappend
 
 This package works well with projects using [sysappend](https://pypi.org/project/sysappend/) for flexible import management. When you have imports like:
 
@@ -223,57 +322,6 @@ from folder_structure.utility_folder.some_utility import print_something
 ```
 
 The package will correctly identify and copy external dependencies even when they're referenced without full package paths.
-
-### Publishing a Subfolder from src/ in a Monorepo
-
-If you have a monorepo structure with multiple packages in `src/`:
-
-```
-project/
-├── src/
-│   ├── core_package/
-│   │   ├── __init__.py
-│   │   ├── core.py
-│   │   └── README.md
-│   ├── api_package/
-│   │   ├── __init__.py
-│   │   ├── api.py
-│   │   └── README.md
-│   └── utils_package/
-│       ├── __init__.py
-│       ├── utils.py
-│       └── README.md
-├── shared/
-│   └── common.py
-└── pyproject.toml
-```
-
-You can build and publish any subfolder from `src/` as a standalone package:
-
-```bash
-# Navigate to the subfolder you want to publish
-cd src/api_package
-
-# Build and publish to TestPyPI with version 1.2.0
-python-package-folder --publish testpypi --version 1.2.0
-
-# Or publish to PyPI with a custom package name
-python-package-folder --publish pypi --version 1.2.0 --package-name "my-api-package"
-
-# Include a specific dependency group from the parent pyproject.toml
-python-package-folder --publish pypi --version 1.2.0 --dependency-group "dev"
-```
-
-The tool will automatically:
-1. Detect the project root (where `pyproject.toml` is located)
-2. Use `src/api_package` as the source directory
-3. Copy any external dependencies (like `shared/common.py`) into the package before building
-4. Use the subfolder's README if present, or create a minimal one
-5. Create a temporary `pyproject.toml` with the subfolder's package name and version
-6. Build and publish the package
-7. Clean up all temporary files and restore the original `pyproject.toml`
-
-This is especially useful for monorepos where you want to publish individual packages independently while sharing common code.
 
 ## Version Management
 
