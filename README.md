@@ -105,9 +105,11 @@ This package will automatically:
 
 ## Features
 
-- **Subfolder Build Support**: Build subfolders as separate packages with automatic project root detection
+- **Subfolder Build Support**: Build subfolders as separate packages with automatic detection and configuration
+  - **Automatic subfolder detection**: Detects when building a subfolder (not the main `src/` directory)
   - Creates any needed file for publishing automatically, cleaning up if not originally in the subfolder after the build/publish process. E.g. copies external dependencies into the source directory before build and cleans them up afterward; temporary `__init__.py` creation for non-package subfolders; uses subfolder README if present, otherwise creates minimal README
   - Automatic package name derivation from subfolder name
+  - Automatic temporary `pyproject.toml` creation with correct package structure
   - Dependency group selection: specify which dependency group from parent `pyproject.toml` to include.
   
 - **Smart Import Classification and analysis**:
@@ -248,22 +250,28 @@ cd my_project/subfolder_to_build
 python-package-folder --version "1.0.0" --publish pypi
 ```
 
-When building from a subdirectory, you **must** specify `--version` because subfolders are built as separate packages with their own version.
+The tool **automatically detects** when you're building a subfolder (any directory that's not the main `src/` directory) and sets up the appropriate build configuration.
 
 The tool automatically:
+- **Detects subfolder builds**: Automatically identifies when building from a subdirectory
 - Finds the project root by looking for `pyproject.toml` in parent directories
 - Uses the current directory as the source directory if it contains Python files
 - Falls back to `project_root/src` if the current directory isn't suitable
-- For subfolder builds: creates a temporary `pyproject.toml` with:
-  - Package name derived from the subfolder name (or use `--package-name` to override)
-  - Version from `--version` argument
-  - Proper package path configuration for hatchling
+- **For subfolder builds**: Handles `pyproject.toml` configuration:
+  - **If `pyproject.toml` exists in subfolder**: Uses that file (copies it to project root temporarily)
+  - **If no `pyproject.toml` in subfolder**: Creates a temporary `pyproject.toml` with:
+    - Package name derived from the subfolder name (e.g., `empty_drawing_detection` → `empty-drawing-detection`)
+    - Version from `--version` argument (defaults to `0.0.0` with a warning if not provided)
+    - Proper package path configuration for hatchling
+    - Dependency groups from parent `pyproject.toml` if specified
 - Creates temporary `__init__.py` files if needed to make subfolders valid Python packages
 - **README handling for subfolder builds**:
   - If a README file (README.md, README.rst, README.txt, or README) exists in the subfolder, it will be used instead of the parent README
   - If no README exists in the subfolder, a minimal README with just the folder name will be created
 - Restores the original `pyproject.toml` after build (unless `--no-restore-versioning` is used)
 - Cleans up temporary `__init__.py` files after build
+
+**Note**: While version is not strictly required (defaults to `0.0.0`), it's recommended to specify `--version` for subfolder builds to ensure proper versioning.
 
 **Subfolder Build Example:**
 ```bash
@@ -273,6 +281,11 @@ python-package-folder --version "0.1.0" --package-name "my-subfolder-package" --
 
 # Build with a specific dependency group from parent pyproject.toml
 python-package-folder --version "0.1.0" --dependency-group "dev" --publish pypi
+
+# If subfolder has its own pyproject.toml, it will be used automatically
+# (package-name and version arguments are ignored in this case)
+cd src/integration/my_package  # assuming my_package/pyproject.toml exists
+python-package-folder --publish pypi
 ```
 
 **Dependency Groups**: When building a subfolder, you can specify a dependency group from the parent `pyproject.toml` to include in the subfolder's build configuration. This allows subfolders to inherit specific dependencies from the parent project:
@@ -287,6 +300,8 @@ The specified dependency group will be copied from the parent `pyproject.toml`'s
 ## Python API Usage
 
 You can also use the package programmatically:
+
+### Basic Usage
 
 ```python
 from pathlib import Path
@@ -308,11 +323,11 @@ for dep in external_deps:
 # Run your build process here
 # ...
 
-# Cleanup copied files
+# Cleanup copied files (also restores pyproject.toml if subfolder build)
 manager.cleanup()
 ```
 
-Or use the convenience method:
+### Using the Convenience Method
 
 ```python
 from pathlib import Path
@@ -326,6 +341,55 @@ def build_command():
 
 # Automatically handles prepare, build, and cleanup
 manager.run_build(build_command)
+```
+
+### Subfolder Builds (Automatic Detection)
+
+The tool automatically detects when you're building a subfolder and sets up the appropriate configuration:
+
+```python
+from pathlib import Path
+from python_package_folder import BuildManager
+import subprocess
+
+# Building a subfolder - automatic detection!
+manager = BuildManager(
+    project_root=Path("."),
+    src_dir=Path("src/integration/empty_drawing_detection")
+)
+
+def build_command():
+    subprocess.run(["uv", "build"], check=True)
+
+# prepare_build() automatically:
+# - Detects this is a subfolder build
+# - If pyproject.toml exists in subfolder: uses that file
+# - If no pyproject.toml in subfolder: creates temporary one with package name "empty-drawing-detection"
+# - Uses version "0.0.0" (or pass version="1.0.0" to override) if creating temporary pyproject.toml
+external_deps = manager.prepare_build(version="1.0.0")
+
+# Run build - uses the pyproject.toml (either from subfolder or temporary)
+build_command()
+
+# Cleanup restores original pyproject.toml and removes copied files
+manager.cleanup()
+```
+
+**Note**: If the subfolder has its own `pyproject.toml`, it will be used automatically. The `version` and `package_name` parameters are only used when creating a temporary `pyproject.toml` from the parent configuration.
+
+Or use the convenience method:
+
+```python
+manager = BuildManager(
+    project_root=Path("."),
+    src_dir=Path("src/integration/empty_drawing_detection")
+)
+
+def build_command():
+    subprocess.run(["uv", "build"], check=True)
+
+# All handled automatically: subfolder detection, pyproject.toml setup, build, cleanup
+manager.run_build(build_command, version="1.0.0", package_name="my-custom-name")
 ```
 
 ## Working with sysappend
@@ -373,20 +437,28 @@ The `--version` option:
 
 ### Subfolder Versioning
 
-When building from a subdirectory (not the main `src/` directory), you **must** specify `--version`:
+When building from a subdirectory (not the main `src/` directory), the tool automatically detects the subfolder and sets up the build configuration:
 
 ```bash
-# Build a subfolder as a separate package
+# Build a subfolder as a separate package (version recommended but not required)
 cd my_project/subfolder_to_build
 python-package-folder --version "1.0.0" --publish pypi
 
 # With custom package name
 python-package-folder --version "1.0.0" --package-name "my-custom-name" --publish pypi
+
+# Version defaults to "0.0.0" if not specified (with a warning)
+python-package-folder --publish pypi
 ```
 
 For subfolder builds:
-- **Version is required**: The tool will error if `--version` is not provided
-- **Package name**: Automatically derived from the subfolder name (e.g., `subfolder_to_build` → `subfolder-to-build`)
+- **Automatic detection**: The tool automatically detects subfolder builds
+- **pyproject.toml handling**:
+  - If `pyproject.toml` exists in subfolder: Uses that file (copied to project root temporarily)
+  - If no `pyproject.toml` in subfolder: Creates temporary one with correct package structure
+- **Version**: Recommended but not required when creating temporary pyproject.toml. If not provided, defaults to `0.0.0` with a warning. Ignored if subfolder has its own `pyproject.toml`.
+- **Package name**: Automatically derived from the subfolder name (e.g., `subfolder_to_build` → `subfolder-to-build`). Only used when creating temporary pyproject.toml.
+- **Restoration**: Original `pyproject.toml` is restored after build
 - **Temporary configuration**: Creates a temporary `pyproject.toml` with:
   - Custom package name (from `--package-name` or derived)
   - Specified version
@@ -695,7 +767,8 @@ version_manager.restore_dynamic_versioning()
 
 ### SubfolderBuildConfig
 
-Manages temporary build configuration for subfolder builds.
+Manages temporary build configuration for subfolder builds. If a `pyproject.toml` exists
+in the subfolder, it will be used instead of creating a new one.
 
 ```python
 from python_package_folder import SubfolderBuildConfig
@@ -704,11 +777,11 @@ from pathlib import Path
 config = SubfolderBuildConfig(
     project_root=Path("."),
     src_dir=Path("subfolder"),
-    package_name="my-subfolder",
-    version="1.0.0"
+    package_name="my-subfolder",  # Only used if subfolder has no pyproject.toml
+    version="1.0.0"  # Only used if subfolder has no pyproject.toml
 )
 
-# Create temporary pyproject.toml
+# Create temporary pyproject.toml (or use subfolder's if it exists)
 config.create_temp_pyproject()
 
 # ... build process ...
@@ -718,13 +791,13 @@ config.restore()
 ```
 
 **Methods:**
-- `create_temp_pyproject() -> Path`: Create temporary `pyproject.toml` with subfolder-specific configuration
+- `create_temp_pyproject() -> Path`: Use subfolder's `pyproject.toml` if it exists, otherwise create temporary `pyproject.toml` with subfolder-specific configuration
 - `restore() -> None`: Restore original `pyproject.toml` and clean up temporary files
 
-**Note**: This class automatically creates `__init__.py` files if needed to make subfolders valid Python packages. It also handles README files:
-- If a README exists in the subfolder, it will be used instead of the parent README
-- If no README exists in the subfolder, a minimal README with just the folder name will be created
-- The original parent README is backed up and restored after the build completes
+**Note**: This class automatically:
+- **pyproject.toml handling**: If a `pyproject.toml` exists in the subfolder, it will be used (copied to project root temporarily). Otherwise, creates a temporary one from the parent configuration.
+- **README handling**: If a README exists in the subfolder, it will be used instead of the parent README. If no README exists in the subfolder, a minimal README with just the folder name will be created. The original parent README is backed up and restored after the build completes.
+- **Package initialization**: Creates `__init__.py` files if needed to make subfolders valid Python packages.
 
 
 ## Development

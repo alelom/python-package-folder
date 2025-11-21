@@ -85,14 +85,12 @@ class BuildManager:
         self.finder = ExternalDependencyFinder(
             self.project_root, self.src_dir, exclude_patterns=exclude_patterns
         )
+        self.subfolder_config: SubfolderBuildConfig | None = None
 
         # Check if it's a valid Python package directory
         if not any(self.src_dir.glob("*.py")) and not (self.src_dir / "__init__.py").exists():
             # Allow empty directories for now, but warn
             pass
-
-        self.copied_files: list[Path] = []
-        self.copied_dirs: list[Path] = []
 
     def find_src_package_dir(self) -> Path | None:
         """
@@ -125,6 +123,21 @@ class BuildManager:
         # Return the first one or src_dir itself
         return package_dirs[0] if package_dirs else self.src_dir
 
+    def _is_subfolder_build(self) -> bool:
+        """
+        Check if we're building a subfolder (not the main src/ directory).
+
+        Returns:
+            True if this is a subfolder build, False otherwise
+        """
+        # Check if src_dir is not the main src/ directory
+        main_src = self.project_root / "src"
+        return (
+            self.src_dir != main_src
+            and self.src_dir != self.project_root
+            and self.src_dir.is_relative_to(self.project_root)
+        )
+
     def _get_project_name(self) -> str | None:
         """
         Get the project name from pyproject.toml.
@@ -155,19 +168,88 @@ class BuildManager:
 
         return None
 
-    def prepare_build(self) -> list[ExternalDependency]:
+    def prepare_build(
+        self,
+        version: str | None = None,
+        package_name: str | None = None,
+        dependency_group: str | None = None,
+    ) -> list[ExternalDependency]:
         """
         Prepare for build by finding and copying external dependencies.
 
-        This method:
-        1. Finds all Python files in the source directory
-        2. Analyzes them for external dependencies
-        3. Copies external files/directories into the source directory
-        4. Reports any ambiguous imports
+        This method automatically detects if you're building a subfolder (not the main src/
+        directory) and sets up pyproject.toml appropriately:
+        - If pyproject.toml exists in the subfolder, it will be used
+        - Otherwise, creates a temporary pyproject.toml with the correct package configuration
+        For subfolder builds without their own pyproject.toml, if no version is provided,
+        it defaults to "0.0.0" with a warning.
+
+        Process:
+        1. Detects if this is a subfolder build and sets up pyproject.toml if needed:
+           - If pyproject.toml exists in subfolder: uses that file
+           - If no pyproject.toml in subfolder: creates temporary one from parent
+        2. Finds all Python files in the source directory
+        3. Analyzes them for external dependencies
+        4. Copies external files/directories into the source directory
+        5. Reports any ambiguous imports
+
+        Args:
+            version: Version for subfolder builds. If building a subfolder and version is None,
+                defaults to "0.0.0" with a warning. Only used when creating temporary pyproject.toml
+                (ignored if subfolder has its own pyproject.toml). For regular builds, this parameter
+                is ignored.
+            package_name: Package name for subfolder builds. If None, derived from src_dir name
+                (e.g., "empty_drawing_detection" -> "empty-drawing-detection"). Only used when
+                creating temporary pyproject.toml (ignored if subfolder has its own pyproject.toml).
+                Ignored for regular builds.
+            dependency_group: Name of dependency group to copy from parent pyproject.toml.
+                Only used for subfolder builds when creating temporary pyproject.toml.
 
         Returns:
             List of ExternalDependency objects that were copied
+
+        Example:
+            ```python
+            # Regular build (main src/ directory)
+            manager = BuildManager(project_root=Path("."), src_dir=Path("src"))
+            deps = manager.prepare_build()  # No version needed
+
+            # Subfolder build (automatic detection)
+            manager = BuildManager(
+                project_root=Path("."),
+                src_dir=Path("src/integration/empty_drawing_detection")
+            )
+            # Version defaults to "0.0.0" if not provided
+            deps = manager.prepare_build(version="1.0.0", package_name="my-package")
+            ```
         """
+        # Check if this is a subfolder build and set up config if needed
+        if self._is_subfolder_build():
+            # For subfolder builds, we need a version
+            # If not provided, use a default version
+            if not version:
+                version = "0.0.0"
+                print(
+                    f"Warning: No version specified for subfolder build. Using default version '{version}'",
+                    file=sys.stderr,
+                )
+
+            if not package_name:
+                # Derive package name from subfolder
+                package_name = (
+                    self.src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
+                )
+
+            print(f"Detected subfolder build. Setting up package '{package_name}' version '{version}'...")
+            self.subfolder_config = SubfolderBuildConfig(
+                project_root=self.project_root,
+                src_dir=self.src_dir,
+                package_name=package_name,
+                version=version,
+                dependency_group=dependency_group,
+            )
+            self.subfolder_config.create_temp_pyproject()
+
         analyzer = ImportAnalyzer(self.project_root)
 
         # Find all Python files in src/
@@ -325,10 +407,30 @@ class BuildManager:
         """
         Remove all copied files and directories.
 
-        This method removes all files and directories that were copied
-        during prepare_build(). It handles errors gracefully and clears
-        the internal tracking lists.
+        This method removes all files and directories that were copied during prepare_build().
+        It also restores the original pyproject.toml if a temporary one was created for a
+        subfolder build. It handles errors gracefully and clears the internal tracking lists.
+
+        This is automatically called by run_build(), but you can call it manually if you
+        use prepare_build() directly.
+
+        Example:
+            ```python
+            manager = BuildManager(project_root=Path("."), src_dir=Path("src"))
+            deps = manager.prepare_build()
+            # ... do your build ...
+            manager.cleanup()  # Restores pyproject.toml and removes copied files
+            ```
         """
+        # Restore subfolder config if it was created
+        if self.subfolder_config:
+            try:
+                self.subfolder_config.restore()
+                print("Restored original pyproject.toml")
+            except Exception as e:
+                print(f"Warning: Could not restore pyproject.toml: {e}", file=sys.stderr)
+            self.subfolder_config = None
+
         # Remove copied directories first (they may contain files)
         for dir_path in reversed(self.copied_dirs):
             if dir_path.exists():
@@ -350,29 +452,59 @@ class BuildManager:
         self.copied_files.clear()
         self.copied_dirs.clear()
 
-    def run_build(self, build_command: Callable[[], None]) -> None:
+    def run_build(
+        self,
+        build_command: Callable[[], None],
+        version: str | None = None,
+        package_name: str | None = None,
+        dependency_group: str | None = None,
+    ) -> None:
         """
         Run the build process with dependency management.
 
-        This is a convenience method that:
-        1. Calls prepare_build() to find and copy dependencies
+        This is a convenience method that automatically handles the full build lifecycle:
+        1. Calls prepare_build() to find and copy dependencies (with automatic subfolder detection)
         2. Executes the provided build_command
         3. Always calls cleanup() afterward, even if build fails
 
+        For subfolder builds, this method automatically detects the subfolder and creates a
+        temporary pyproject.toml with the correct package configuration. The build command
+        should be runnable from the project root (e.g., "uv build", "python -m build").
+
         Args:
-            build_command: Callable that executes the build process
+            build_command: Callable that executes the build process. Should run from project root.
+            version: Version for subfolder builds. If building a subfolder and version is None,
+                defaults to "0.0.0" with a warning. Ignored for regular builds.
+            package_name: Package name for subfolder builds. If None, derived from src_dir name.
+                Ignored for regular builds.
+            dependency_group: Name of dependency group to copy from parent pyproject.toml.
+                Only used for subfolder builds.
 
         Example:
             ```python
+            from pathlib import Path
+            from python_package_folder import BuildManager
+            import subprocess
+
+            # Regular build
+            manager = BuildManager(project_root=Path("."), src_dir=Path("src"))
             def build():
                 subprocess.run(["uv", "build"], check=True)
-
             manager.run_build(build)
+
+            # Subfolder build (automatic detection)
+            manager = BuildManager(
+                project_root=Path("."),
+                src_dir=Path("src/integration/empty_drawing_detection")
+            )
+            manager.run_build(build, version="1.0.0")
             ```
         """
         try:
             print("Analyzing project for external dependencies...")
-            external_deps = self.prepare_build()
+            external_deps = self.prepare_build(
+                version=version, package_name=package_name, dependency_group=dependency_group
+            )
 
             if external_deps:
                 print(f"\nFound {len(external_deps)} external dependencies")
@@ -444,49 +576,37 @@ class BuildManager:
 
         version_manager = None
         original_version = None
-        subfolder_config = None
-
-        # Check if we're building a subfolder (not the main src/ directory)
-        is_subfolder_build = not self.src_dir.is_relative_to(self.project_root / "src") or (
-            self.src_dir != self.project_root / "src" and self.src_dir != self.project_root
-        )
 
         try:
-            # For subfolder builds, create a temporary pyproject.toml
-            if is_subfolder_build and version:
-                if not package_name:
-                    # Derive package name from subfolder
-                    package_name = (
-                        self.src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
-                    )
-                print(f"Building subfolder as package '{package_name}' version '{version}'...")
-                subfolder_config = SubfolderBuildConfig(
-                    project_root=self.project_root,
-                    src_dir=self.src_dir,
-                    package_name=package_name,
-                    version=version,
-                    dependency_group=dependency_group,
-                )
-                subfolder_config.create_temp_pyproject()
-            elif version:
-                # Regular build with version override
+            # For non-subfolder builds with version, use VersionManager
+            if version and not self._is_subfolder_build():
                 version_manager = VersionManager(self.project_root)
                 original_version = version_manager.get_current_version()
                 print(f"Setting version to {version}...")
                 version_manager.set_version(version)
 
-            # Build the package
-            self.run_build(build_command)
+            # Build the package (prepare_build will handle subfolder config if needed)
+            self.run_build(
+                build_command,
+                version=version,
+                package_name=package_name,
+                dependency_group=dependency_group,
+            )
 
             # Publish if repository is specified
             if repository:
                 # Determine package name and version for filtering
                 publish_package_name = None
                 publish_version = version
+                is_subfolder_build = self._is_subfolder_build()
 
-                if is_subfolder_build and package_name:
-                    publish_package_name = package_name
-                elif not is_subfolder_build:
+                if is_subfolder_build:
+                    # Get package name from subfolder_config if it was created, otherwise use provided
+                    if self.subfolder_config:
+                        publish_package_name = self.subfolder_config.package_name
+                    elif package_name:
+                        publish_package_name = package_name
+                else:
                     # For regular builds, get package name from pyproject.toml
                     try:
                         import tomllib
@@ -515,15 +635,7 @@ class BuildManager:
                 )
                 publisher.publish(skip_existing=skip_existing)
         finally:
-            # Restore subfolder config if used
-            if subfolder_config and restore_versioning:
-                try:
-                    subfolder_config.restore()
-                    print("Restored original pyproject.toml")
-                except Exception as e:
-                    print(f"Warning: Could not restore pyproject.toml: {e}", file=sys.stderr)
-
-            # Restore versioning if needed
+            # Restore versioning if needed (subfolder config is handled by cleanup)
             if version_manager and restore_versioning:
                 try:
                     if original_version:

@@ -29,8 +29,10 @@ class SubfolderBuildConfig:
     """
     Manages temporary build configuration for subfolder builds.
 
-    When building a subfolder as a separate package, this class creates
-    a temporary pyproject.toml with the appropriate package name and version.
+    When building a subfolder as a separate package, this class:
+    - Uses the subfolder's pyproject.toml if it exists
+    - Otherwise creates a temporary pyproject.toml with the appropriate package name and version
+    - Handles README files similarly (uses subfolder README if present)
     """
 
     def __init__(
@@ -47,9 +49,12 @@ class SubfolderBuildConfig:
         Args:
             project_root: Root directory containing the main pyproject.toml
             src_dir: Source directory being built (subfolder)
-            package_name: Name for the subfolder package (default: derived from src_dir name)
-            version: Version for the subfolder package (required if building subfolder)
-            dependency_group: Name of dependency group to copy from parent pyproject.toml
+            package_name: Name for the subfolder package (default: derived from src_dir name).
+                Only used if subfolder doesn't have its own pyproject.toml.
+            version: Version for the subfolder package (required if building subfolder).
+                Only used if subfolder doesn't have its own pyproject.toml.
+            dependency_group: Name of dependency group to copy from parent pyproject.toml.
+                Only used if subfolder doesn't have its own pyproject.toml.
         """
         self.project_root = project_root.resolve()
         self.src_dir = src_dir.resolve()
@@ -61,6 +66,7 @@ class SubfolderBuildConfig:
         self._temp_init_created = False
         self.temp_readme: Path | None = None
         self.original_readme_backup: Path | None = None
+        self._used_subfolder_pyproject = False
 
     def _derive_package_name(self) -> str:
         """Derive package name from source directory name."""
@@ -109,11 +115,12 @@ class SubfolderBuildConfig:
         """
         Create a temporary pyproject.toml for the subfolder build.
 
-        This creates a pyproject.toml in the project root that overrides
-        the package name and version for building the subfolder.
+        If a pyproject.toml exists in the subfolder, it will be used instead of creating
+        a new one. Otherwise, creates a pyproject.toml in the project root based on the
+        parent pyproject.toml with the appropriate package name and version.
 
         Returns:
-            Path to the temporary pyproject.toml file
+            Path to the pyproject.toml file (either from subfolder or created temporary)
         """
         if not self.version:
             raise ValueError("Version is required for subfolder builds")
@@ -126,6 +133,33 @@ class SubfolderBuildConfig:
             self._temp_init_created = True
         else:
             self._temp_init_created = False
+
+        # Check if pyproject.toml exists in subfolder
+        subfolder_pyproject = self.src_dir / "pyproject.toml"
+        if subfolder_pyproject.exists():
+            # Use the subfolder's pyproject.toml
+            print(f"Using existing pyproject.toml from subfolder: {subfolder_pyproject}")
+            self._used_subfolder_pyproject = True
+
+            # Backup the original project root pyproject.toml if it exists
+            original_pyproject = self.project_root / "pyproject.toml"
+            if original_pyproject.exists():
+                backup_path = self.project_root / "pyproject.toml.backup"
+                shutil.copy2(original_pyproject, backup_path)
+                self.original_pyproject_backup = backup_path
+
+            # Copy subfolder pyproject.toml to project root
+            shutil.copy2(subfolder_pyproject, original_pyproject)
+            self.temp_pyproject = original_pyproject
+
+            # Handle README file
+            self._handle_readme()
+
+            return original_pyproject
+
+        # No pyproject.toml in subfolder, create one from parent
+        self._used_subfolder_pyproject = False
+        print("No pyproject.toml found in subfolder, creating temporary one from parent")
 
         # Read the original pyproject.toml
         original_pyproject = self.project_root / "pyproject.toml"
@@ -419,7 +453,13 @@ class SubfolderBuildConfig:
             self.temp_readme = target_readme
 
     def restore(self) -> None:
-        """Restore the original pyproject.toml and remove temporary __init__.py if created."""
+        """
+        Restore the original pyproject.toml and remove temporary __init__.py if created.
+
+        If a subfolder pyproject.toml was used, it restores the original project root
+        pyproject.toml from backup. If a temporary pyproject.toml was created, it
+        restores the original as well.
+        """
         # Remove temporary __init__.py if we created it
         if self._temp_init_created:
             init_file = self.src_dir / "__init__.py"
@@ -467,6 +507,7 @@ class SubfolderBuildConfig:
             self.original_pyproject_backup.unlink()
             self.original_pyproject_backup = None
             self.temp_pyproject = None
+            self._used_subfolder_pyproject = False
 
     def __enter__(self) -> Self:
         """Context manager entry."""
