@@ -240,7 +240,9 @@ class BuildManager:
                     self.src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
                 )
 
-            print(f"Detected subfolder build. Setting up package '{package_name}' version '{version}'...")
+            print(
+                f"Detected subfolder build. Setting up package '{package_name}' version '{version}'..."
+            )
             self.subfolder_config = SubfolderBuildConfig(
                 project_root=self.project_root,
                 src_dir=self.src_dir,
@@ -248,7 +250,11 @@ class BuildManager:
                 version=version,
                 dependency_group=dependency_group,
             )
-            self.subfolder_config.create_temp_pyproject()
+            temp_pyproject = self.subfolder_config.create_temp_pyproject()
+            # If temp_pyproject is None, it means no parent pyproject.toml exists
+            # This is acceptable for tests or dependency-only operations
+            if temp_pyproject is None:
+                self.subfolder_config = None
 
         analyzer = ImportAnalyzer(self.project_root)
 

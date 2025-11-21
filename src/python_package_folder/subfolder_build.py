@@ -111,7 +111,7 @@ class SubfolderBuildConfig:
         # If it's a package or has subpackages, return the path
         return packages_path, [packages_path] if packages_path else []
 
-    def create_temp_pyproject(self) -> Path:
+    def create_temp_pyproject(self) -> Path | None:
         """
         Create a temporary pyproject.toml for the subfolder build.
 
@@ -120,7 +120,8 @@ class SubfolderBuildConfig:
         parent pyproject.toml with the appropriate package name and version.
 
         Returns:
-            Path to the pyproject.toml file (either from subfolder or created temporary)
+            Path to the pyproject.toml file (either from subfolder or created temporary),
+            or None if no parent pyproject.toml exists (in which case subfolder config is skipped)
         """
         if not self.version:
             raise ValueError("Version is required for subfolder builds")
@@ -164,7 +165,17 @@ class SubfolderBuildConfig:
         # Read the original pyproject.toml
         original_pyproject = self.project_root / "pyproject.toml"
         if not original_pyproject.exists():
-            raise FileNotFoundError(f"pyproject.toml not found: {original_pyproject}")
+            # If no parent pyproject.toml exists, we can't create a temporary one
+            # This is acceptable for tests or cases where only dependency copying is needed
+            print(
+                f"Warning: No pyproject.toml found in project root ({original_pyproject}). "
+                "Skipping subfolder build configuration. Only dependency copying will be performed.",
+                file=sys.stderr,
+            )
+            # Still handle README file
+            self._handle_readme()
+            # Return None to indicate no pyproject.toml was created
+            return None
 
         original_content = original_pyproject.read_text(encoding="utf-8")
 
@@ -500,8 +511,12 @@ class SubfolderBuildConfig:
                     pass  # Ignore errors during cleanup
             self.temp_readme = None
 
-        # Restore original pyproject.toml
-        if self.original_pyproject_backup and self.original_pyproject_backup.exists():
+        # Restore original pyproject.toml (only if we created/used one)
+        if (
+            self.temp_pyproject
+            and self.original_pyproject_backup
+            and self.original_pyproject_backup.exists()
+        ):
             original_pyproject = self.project_root / "pyproject.toml"
             shutil.copy2(self.original_pyproject_backup, original_pyproject)
             self.original_pyproject_backup.unlink()
