@@ -224,6 +224,57 @@ from folder_structure.utility_folder.some_utility import print_something
 
 The package will correctly identify and copy external dependencies even when they're referenced without full package paths.
 
+### Publishing a Subfolder from src/ in a Monorepo
+
+If you have a monorepo structure with multiple packages in `src/`:
+
+```
+project/
+├── src/
+│   ├── core_package/
+│   │   ├── __init__.py
+│   │   ├── core.py
+│   │   └── README.md
+│   ├── api_package/
+│   │   ├── __init__.py
+│   │   ├── api.py
+│   │   └── README.md
+│   └── utils_package/
+│       ├── __init__.py
+│       ├── utils.py
+│       └── README.md
+├── shared/
+│   └── common.py
+└── pyproject.toml
+```
+
+You can build and publish any subfolder from `src/` as a standalone package:
+
+```bash
+# Navigate to the subfolder you want to publish
+cd src/api_package
+
+# Build and publish to TestPyPI with version 1.2.0
+python-package-folder --publish testpypi --version 1.2.0
+
+# Or publish to PyPI with a custom package name
+python-package-folder --publish pypi --version 1.2.0 --package-name "my-api-package"
+
+# Include a specific dependency group from the parent pyproject.toml
+python-package-folder --publish pypi --version 1.2.0 --dependency-group "dev"
+```
+
+The tool will automatically:
+1. Detect the project root (where `pyproject.toml` is located)
+2. Use `src/api_package` as the source directory
+3. Copy any external dependencies (like `shared/common.py`) into the package before building
+4. Use the subfolder's README if present, or create a minimal one
+5. Create a temporary `pyproject.toml` with the subfolder's package name and version
+6. Build and publish the package
+7. Clean up all temporary files and restore the original `pyproject.toml`
+
+This is especially useful for monorepos where you want to publish individual packages independently while sharing common code.
+
 ## Version Management
 
 The package supports both dynamic versioning (from git tags) and manual version specification.
