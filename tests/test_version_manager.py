@@ -51,7 +51,7 @@ class TestVersionManager:
         pyproject.write_text('[project]\nname = "test-package"\nversion = "1.2.3"\n')
 
         manager = VersionManager(test_pyproject)
-        version = manager.get_current_version()
+        manager.get_current_version()  # Should not crash
 
         # Version manager should be able to read it
         # If tomllib is available, it should work. If not, regex fallback should work.
@@ -117,7 +117,6 @@ class TestVersionManager:
     def test_restore_dynamic_versioning(self, test_pyproject: Path) -> None:
         """Test restoring dynamic versioning."""
         manager = VersionManager(test_pyproject)
-        original_content = (test_pyproject / "pyproject.toml").read_text()
 
         # Set static version
         manager.set_version("1.0.0")

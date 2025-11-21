@@ -12,7 +12,6 @@ import subprocess
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import Literal
 
 try:
     import keyring
@@ -75,9 +74,9 @@ class Publisher:
         if isinstance(repository, str):
             try:
                 self.repository = Repository(repository.lower())
-            except ValueError:
+            except ValueError as err:
                 valid_repos = ", ".join(r.value for r in Repository)
-                raise ValueError(f"Invalid repository: {repository}. Must be one of: {valid_repos}")
+                raise ValueError(f"Invalid repository: {repository}. Must be one of: {valid_repos}") from err
         else:
             self.repository = repository
 
@@ -255,7 +254,7 @@ class Publisher:
         print(f"Files to upload: {len(dist_files)}")
 
         try:
-            result = subprocess.run(cmd, check=True, text=True)
+            subprocess.run(cmd, check=True, text=True)
             print(f"\n✓ Successfully published to {self.repository.value}")
         except subprocess.CalledProcessError as e:
             print(f"\n✗ Failed to publish to {self.repository.value}", file=sys.stderr)

@@ -225,12 +225,12 @@ class TestBuildManager:
         manager = BuildManager(test_project_root, src_dir)
 
         # First call
-        deps1 = manager.prepare_build()
+        manager.prepare_build()
         count1 = len(manager.copied_files) + len(manager.copied_dirs)
         copied_paths1 = set(manager.copied_files + manager.copied_dirs)
 
         # Second call (should not duplicate files, but may have fewer deps since files are now local)
-        deps2 = manager.prepare_build()
+        manager.prepare_build()
         count2 = len(manager.copied_files) + len(manager.copied_dirs)
         copied_paths2 = set(manager.copied_files + manager.copied_dirs)
 

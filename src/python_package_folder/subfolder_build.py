@@ -10,8 +10,11 @@ from __future__ import annotations
 import re
 import shutil
 import sys
-import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Self
 
 try:
     import tomllib
@@ -82,9 +85,6 @@ class SubfolderBuildConfig:
         # Check for Python files directly in src_dir
         py_files = list(self.src_dir.glob("*.py"))
         has_py_files = bool(py_files)
-        
-        # Check for subdirectories that might be packages
-        subdirs = [d for d in self.src_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
         
         # Calculate relative path
         try:
@@ -209,7 +209,7 @@ class SubfolderBuildConfig:
         if not package_dirs:
             package_dirs = []
 
-        for i, line in enumerate(lines):
+        for _i, line in enumerate(lines):
             # Skip hatch versioning and uv-dynamic-versioning sections
             if line.strip().startswith("[tool.hatch.version]"):
                 skip_hatch_version = True
@@ -379,11 +379,11 @@ class SubfolderBuildConfig:
             self.original_pyproject_backup = None
             self.temp_pyproject = None
 
-    def __enter__(self) -> "SubfolderBuildConfig":
+    def __enter__(self) -> Self:
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # noqa: ARG002
         """Context manager exit - always restore."""
         self.restore()
 

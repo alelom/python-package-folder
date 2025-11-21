@@ -377,7 +377,7 @@ class BuildManager:
             manager.build_and_publish(build, repository="pypi", version="1.2.3")
             ```
         """
-        from .publisher import Publisher, Repository
+        from .publisher import Publisher
         from .version import VersionManager
 
         version_manager = None
@@ -424,8 +424,6 @@ class BuildManager:
                     publish_package_name = package_name
                 elif not is_subfolder_build:
                     # For regular builds, get package name from pyproject.toml
-                    from .version import VersionManager
-                    vm = VersionManager(self.project_root)
                     try:
                         import tomllib
                     except ImportError:

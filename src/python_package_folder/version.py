@@ -122,11 +122,10 @@ class VersionManager:
         lines = content.split("\n")
         result = []
         skip_next = False
-        in_dynamic = False
         in_hatch_version = False
         in_uv_dynamic = False
 
-        for i, line in enumerate(lines):
+        for _i, line in enumerate(lines):
             # Skip lines in sections we want to remove
             if skip_next:
                 skip_next = False

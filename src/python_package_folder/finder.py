@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .analyzer import ImportAnalyzer
-from .types import ExternalDependency, ImportInfo
+from .types import ExternalDependency
 
 
 class ExternalDependencyFinder:
