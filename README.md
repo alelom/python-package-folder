@@ -3,37 +3,39 @@
 [![Tests](https://github.com/alelom/python-package-folder/actions/workflows/ci.yml/badge.svg)](https://github.com/alelom/python-package-folder/actions/workflows/ci.yml)
 [![Coverage](https://raw.githubusercontent.com/alelom/python-package-folder/main/coverage.svg)](https://github.com/alelom/python-package-folder)
 
-Python package to automatically analyze, detect, and manage external dependencies when building Python packages. This tool recursively parses all Python files in your project, identifies imports from outside the main package directory, and temporarily copies them into the source directory during the build process.
+Easily build and publish any target folder in a repository, including subfolders of a monorepo.
+Together with [sysappend](https://pypi.org/project/sysappend/), this library makes relative imports, flexible import management, and package publishing a breeze.
 
 ## Features
 
-- **Automatic Import Analysis**: Recursively parses all `.py` files to detect `import` and `from ... import ...` statements
-- **Smart Import Classification**: Distinguishes between:
-  - Standard library imports
-  - Third-party packages (from site-packages)
-  - Local imports (within the source directory)
-  - External imports (outside source directory but in the project)
-  - Ambiguous imports (unresolvable)
-- **External Dependency Detection**: Automatically finds modules and files that originate from outside the main package directory
-- **Temporary File Management**: Copies external dependencies into the source directory before build and cleans them up afterward
+- **Subfolder Build Support**: Build subfolders as separate packages with automatic project root detection
+  - Creates any needed file for publishing automatically, cleaning up if not originally in the subfolder after the build/publish process. E.g. copies external dependencies into the source directory before build and cleans them up afterward; temporary `__init__.py` creation for non-package subfolders; uses subfolder README if present, otherwise creates minimal README
+  - Automatic package name derivation from subfolder name
+  - Dependency group selection: specify which dependency group from parent `pyproject.toml` to include.
+  
+- **Smart Import Classification and analysis**:
+  - Recursively parses all `.py` files to detect `import` and `from ... import ...` statements
+  - Handles external dependencies (modules and files that originate from outside the main package directory), and distinguishes standard library imports, 3rd-party packages (from site-packages), local/external/relative/ambiguous imports.
+
 - **Idempotent Operations**: Safely handles repeated runs without duplicating files
 - **Build Integration**: Seamlessly integrates with build tools like `uv build`, `pip build`, etc.
-- **Warning System**: Reports ambiguous imports that couldn't be resolved
-- **Subfolder Build Support**: Build subfolders as separate packages with automatic project root detection
-- **Smart Publishing**: Only uploads distribution files from the current build, filtering out old artifacts
-- **Auto-Detection**: Automatically finds project root and source directory when run from any subdirectory
-- **Authentication Helpers**: Auto-detects API tokens and uses correct username format
+- **Version Management**: 
+  - Set static versions for publishing (PEP 440 compliant)
+  - Temporarily override dynamic versioning during builds
+  - Automatic restoration of dynamic versioning after build
+- **Package Publishing**:
+  - Uses twine to publish the built folder/subfolder 
+  - Handles publishing to to PyPI, TestPyPI, or Azure Artifacts, with interactive credential prompts, secure storage support
+
 
 ## Installation
 
 ```bash
-pip install python-package-folder
-```
-
-Or using `uv`:
-
-```bash
 uv add python-package-folder
+
+# or
+
+pip install python-package-folder
 ```
 
 **Note**: For publishing functionality, you'll also need `twine`:
@@ -50,24 +52,42 @@ uv add twine
 
 The simplest way to use this package is via the command-line interface:
 
+#### Build/publish a specific subfolder in a repository
+Useful for monorepos containing many subfolders that may need publishing as stand-alone packages for external usage.
+
 ```bash
-# Build with automatic dependency management (from project root)
+# First cd to the specific subfolder
+cd src/subfolder_to_build_and_publish
+
+# Build and publish any subdirectory of your repo to TestPyPi (https://test.pypi.org/) 
+python-package-folder --publish testpypi --version 0.0.2
+
+# Only analyse (no building)
+cd src/subfolder_to_build_and_publish
+python-package-folder --analyze-only
+
+# Only build
+cd src/subfolder_to_build_and_publish
+python-package-folder
+
+# Build with automatic dependency management
 python-package-folder --build-command "uv build"
+```
 
-# Analyze dependencies without building
-python-package-folder --analyze-only
+You can also target a specific subfolder via commandline, rather than `cd`ing there:
 
-# Build from any subdirectory - auto-detects project root and source directory
-cd tests/folder_structure/subfolder_to_build
-python-package-folder --analyze-only
-
+```python
 # Specify custom project root and source directory
 python-package-folder --project-root /path/to/project --src-dir /path/to/src --build-command "pip build"
 ```
 
+## How does `python-package-folder` work?
+
 ### Building from Subdirectories
 
-The tool can automatically detect the project root by searching for `pyproject.toml` in parent directories. This allows you to build subfolders of a main project as separate packages:
+This is useful for monorepos containing many subfolders that may need publishing as stand-alone packages for external usage.  
+The tool automatically detects the project root by searching for `pyproject.toml` in parent directories.  
+This allows you to build subfolders of a main project as separate packages:
 
 ```bash
 # From a subdirectory, the tool will:
@@ -80,7 +100,7 @@ cd my_project/subfolder_to_build
 python-package-folder --version "1.0.0" --publish pypi
 ```
 
-**Important**: When building from a subdirectory, you **must** specify `--version` because subfolders are built as separate packages with their own version.
+When building from a subdirectory, you **must** specify `--version` because subfolders are built as separate packages with their own version.
 
 The tool automatically:
 - Finds the project root by looking for `pyproject.toml` in parent directories
