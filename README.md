@@ -16,6 +16,10 @@ Python package to automatically analyze, detect, and manage external dependencie
 - **Idempotent Operations**: Safely handles repeated runs without duplicating files
 - **Build Integration**: Seamlessly integrates with build tools like `uv build`, `pip build`, etc.
 - **Warning System**: Reports ambiguous imports that couldn't be resolved
+- **Subfolder Build Support**: Build subfolders as separate packages with automatic project root detection
+- **Smart Publishing**: Only uploads distribution files from the current build, filtering out old artifacts
+- **Auto-Detection**: Automatically finds project root and source directory when run from any subdirectory
+- **Authentication Helpers**: Auto-detects API tokens and uses correct username format
 
 ## Installation
 
@@ -44,14 +48,54 @@ uv add twine
 The simplest way to use this package is via the command-line interface:
 
 ```bash
-# Build with automatic dependency management
+# Build with automatic dependency management (from project root)
 python-package-folder --build-command "uv build"
 
 # Analyze dependencies without building
 python-package-folder --analyze-only
 
+# Build from any subdirectory - auto-detects project root and source directory
+cd tests/folder_structure/subfolder_to_build
+python-package-folder --analyze-only
+
 # Specify custom project root and source directory
 python-package-folder --project-root /path/to/project --src-dir /path/to/src --build-command "pip build"
+```
+
+### Building from Subdirectories
+
+The tool can automatically detect the project root by searching for `pyproject.toml` in parent directories. This allows you to build subfolders of a main project as separate packages:
+
+```bash
+# From a subdirectory, the tool will:
+# 1. Find pyproject.toml in parent directories (project root)
+# 2. Use current directory as source if it contains Python files
+# 3. Build with dependencies from the parent project
+# 4. Create a temporary build config with subfolder-specific name and version
+
+cd my_project/subfolder_to_build
+python-package-folder --version "1.0.0" --publish pypi
+```
+
+**Important**: When building from a subdirectory, you **must** specify `--version` because subfolders are built as separate packages with their own version.
+
+The tool automatically:
+- Finds the project root by looking for `pyproject.toml` in parent directories
+- Uses the current directory as the source directory if it contains Python files
+- Falls back to `project_root/src` if the current directory isn't suitable
+- For subfolder builds: creates a temporary `pyproject.toml` with:
+  - Package name derived from the subfolder name (or use `--package-name` to override)
+  - Version from `--version` argument
+  - Proper package path configuration for hatchling
+- Creates temporary `__init__.py` files if needed to make subfolders valid Python packages
+- Restores the original `pyproject.toml` after build (unless `--no-restore-versioning` is used)
+- Cleans up temporary `__init__.py` files after build
+
+**Subfolder Build Example:**
+```bash
+# Build a subfolder as a separate package
+cd tests/folder_structure/subfolder_to_build
+python-package-folder --version "0.1.0" --package-name "my-subfolder-package" --publish pypi
 ```
 
 ### Python API Usage
@@ -169,6 +213,29 @@ The `--version` option:
 
 **Version Format**: Versions must follow PEP 440 (e.g., `1.2.3`, `1.2.3a1`, `1.2.3.post1`, `1.2.3.dev1`)
 
+### Subfolder Versioning
+
+When building from a subdirectory (not the main `src/` directory), you **must** specify `--version`:
+
+```bash
+# Build a subfolder as a separate package
+cd my_project/subfolder_to_build
+python-package-folder --version "1.0.0" --publish pypi
+
+# With custom package name
+python-package-folder --version "1.0.0" --package-name "my-custom-name" --publish pypi
+```
+
+For subfolder builds:
+- **Version is required**: The tool will error if `--version` is not provided
+- **Package name**: Automatically derived from the subfolder name (e.g., `subfolder_to_build` → `subfolder-to-build`)
+- **Temporary configuration**: Creates a temporary `pyproject.toml` with:
+  - Custom package name (from `--package-name` or derived)
+  - Specified version
+  - Correct package path for hatchling
+- **Package initialization**: Automatically creates `__init__.py` if the subfolder doesn't have one (required for hatchling)
+- **Auto-restore**: Original `pyproject.toml` is restored after build, and temporary `__init__.py` files are removed
+
 ### Python API for Version Management
 
 ```python
@@ -242,6 +309,21 @@ python-package-folder --publish pypi --skip-existing
 **For PyPI/TestPyPI:**
 - **Username**: Your PyPI username, or `__token__` for API tokens
 - **Password**: Your PyPI password or API token (recommended)
+- **Auto-detection**: If you provide an API token (starts with `pypi-`), the tool will automatically use `__token__` as the username, even if you entered a different username
+
+**Common Authentication Issues:**
+- **403 Forbidden**: Usually means you used your username instead of `__token__` with an API token. The tool now auto-detects this.
+- **TestPyPI vs PyPI**: TestPyPI requires a separate account and token from https://test.pypi.org/manage/account/token/
+
+### Smart File Filtering
+
+When publishing, the tool automatically filters distribution files to only upload those matching the current build:
+
+- **Package name matching**: Only uploads files for the package being built
+- **Version matching**: Only uploads files for the specified version
+- **Automatic cleanup**: Old build artifacts in `dist/` are ignored, preventing accidental uploads
+
+This ensures that when building a subfolder package, only that package's distribution files are uploaded, not files from previous builds of other packages.
 
 To get a PyPI API token:
 1. Go to https://pypi.org/manage/account/token/
@@ -330,7 +412,11 @@ options:
   --username USERNAME   Username for publishing (will prompt if not provided)
   --password PASSWORD   Password/token for publishing (will prompt if not provided)
   --skip-existing       Skip files that already exist on the repository
-  --version VERSION     Set a specific version before building (PEP 440 format)
+  --version VERSION     Set a specific version before building (PEP 440 format).
+                        Required for subfolder builds.
+  --package-name PACKAGE_NAME
+                        Package name for subfolder builds (default: derived from
+                        source directory name)
   --no-restore-versioning
                         Don't restore dynamic versioning after build
 ```
@@ -398,14 +484,18 @@ publisher = Publisher(
     repository=Repository.PYPI,
     dist_dir=Path("dist"),
     username="__token__",
-    password="pypi-xxxxx"
+    password="pypi-xxxxx",
+    package_name="my-package",  # Optional: filter files by package name
+    version="1.2.3"              # Optional: filter files by version
 )
 publisher.publish()
 ```
 
 **Methods:**
-- `publish(skip_existing: bool = False) -> None`: Publish the package
+- `publish(skip_existing: bool = False) -> None`: Publish the package (automatically filters by package_name/version if provided)
 - `publish_interactive(skip_existing: bool = False) -> None`: Publish with interactive credential prompts
+
+**Note**: When `package_name` and `version` are provided, only distribution files matching those parameters are uploaded. This prevents uploading old build artifacts.
 
 ### VersionManager
 
@@ -432,6 +522,36 @@ version_manager.restore_dynamic_versioning()
 - `get_current_version() -> str | None`: Get current version from pyproject.toml
 - `restore_dynamic_versioning() -> None`: Restore dynamic versioning configuration
 
+### SubfolderBuildConfig
+
+Manages temporary build configuration for subfolder builds.
+
+```python
+from python_package_folder import SubfolderBuildConfig
+from pathlib import Path
+
+config = SubfolderBuildConfig(
+    project_root=Path("."),
+    src_dir=Path("subfolder"),
+    package_name="my-subfolder",
+    version="1.0.0"
+)
+
+# Create temporary pyproject.toml
+config.create_temp_pyproject()
+
+# ... build process ...
+
+# Restore original configuration
+config.restore()
+```
+
+**Methods:**
+- `create_temp_pyproject() -> Path`: Create temporary `pyproject.toml` with subfolder-specific configuration
+- `restore() -> None`: Restore original `pyproject.toml` and clean up temporary files
+
+**Note**: This class automatically creates `__init__.py` files if needed to make subfolders valid Python packages.
+
 ## How It Works
 
 ### Build Process
@@ -454,13 +574,27 @@ version_manager.restore_dynamic_versioning()
 ### Publishing Process
 
 1. **Build Verification**: Ensures distribution files exist in the `dist/` directory
-2. **Credential Management**: 
+2. **File Filtering**: Automatically filters distribution files to only include those matching the current package name and version (prevents uploading old artifacts)
+3. **Credential Management**: 
    - Prompts for credentials if not provided
    - Uses `keyring` for secure storage (if available)
    - Supports both username/password and API tokens
-3. **Repository Configuration**: Configures the target repository (PyPI, TestPyPI, or Azure)
-4. **Upload**: Uses `twine` to upload distribution files to the repository
-5. **Verification**: Confirms successful upload
+   - Auto-detects API tokens and uses `__token__` as username
+4. **Repository Configuration**: Configures the target repository (PyPI, TestPyPI, or Azure)
+5. **Upload**: Uses `twine` to upload distribution files to the repository
+6. **Verification**: Confirms successful upload
+
+### Subfolder Build Process
+
+1. **Project Root Detection**: Searches parent directories for `pyproject.toml`
+2. **Source Directory Detection**: Uses current directory if it contains Python files, otherwise falls back to `project_root/src`
+3. **Package Initialization**: Creates temporary `__init__.py` if subfolder doesn't have one (required for hatchling)
+4. **Configuration Creation**: Creates temporary `pyproject.toml` with:
+   - Subfolder-specific package name (derived or custom)
+   - Specified version
+   - Correct package path for hatchling
+5. **Build Execution**: Runs build command with all dependencies in place
+6. **Cleanup**: Restores original `pyproject.toml` and removes temporary `__init__.py`
 
 ## Requirements
 

@@ -57,6 +57,8 @@ class Publisher:
         repository_url: str | None = None,
         username: str | None = None,
         password: str | None = None,
+        package_name: str | None = None,
+        version: str | None = None,
     ) -> None:
         """
         Initialize the publisher.
@@ -67,6 +69,8 @@ class Publisher:
             repository_url: Custom repository URL (required for Azure)
             username: Username for authentication (will prompt if not provided)
             password: Password/token for authentication (will prompt if not provided)
+            package_name: Package name to filter distribution files (optional)
+            version: Package version to filter distribution files (optional)
         """
         if isinstance(repository, str):
             try:
@@ -81,6 +85,8 @@ class Publisher:
         self.repository_url = repository_url
         self.username = username
         self.password = password
+        self.package_name = package_name
+        self.version = version
 
     def _get_repository_url(self) -> str:
         """Get the repository URL based on the selected repository."""
@@ -139,6 +145,16 @@ class Publisher:
             if not password:
                 raise ValueError("Password/token is required")
 
+        # Auto-detect if password is an API token and adjust username
+        if password.startswith("pypi-") or password.startswith("pypi_Ag"):
+            # This is an API token, username should be __token__
+            if username != "__token__":
+                print(
+                    f"Note: Detected API token. Using '__token__' as username instead of '{username}'",
+                    file=sys.stderr,
+                )
+                username = "__token__"
+
         # Store in keyring if available
         if keyring:
             try:
@@ -177,9 +193,51 @@ class Publisher:
         if not self.dist_dir.exists():
             raise ValueError(f"Distribution directory not found: {self.dist_dir}")
 
-        dist_files = list(self.dist_dir.glob("*.whl")) + list(self.dist_dir.glob("*.tar.gz"))
+        all_dist_files = list(self.dist_dir.glob("*.whl")) + list(self.dist_dir.glob("*.tar.gz"))
+        
+        # Filter files by package name and version if provided
+        if self.package_name and self.version:
+            # Normalize package name - try both hyphen and underscore variants
+            # Wheel names typically use hyphens, but source dists might use underscores
+            name_hyphen = self.package_name.replace("_", "-").lower()
+            name_underscore = self.package_name.replace("-", "_").lower()
+            name_original = self.package_name.lower()
+            
+            # Try all name variants
+            name_variants = {name_hyphen, name_underscore, name_original}
+            version_str = self.version
+            
+            dist_files = []
+            for f in all_dist_files:
+                # Get the base filename without extension
+                # For wheels: name-version-tag.whl -> name-version-tag
+                # For source: name-version.tar.gz -> name-version
+                stem = f.stem
+                if f.suffix == ".gz" and stem.endswith(".tar"):
+                    # Handle .tar.gz files
+                    stem = stem[:-4]  # Remove .tar
+                
+                # Check if filename starts with any name variant followed by version
+                matches = False
+                for name_variant in name_variants:
+                    # Pattern: {name}-{version} or {name}-{version}-{tag}
+                    if stem.startswith(f"{name_variant}-{version_str}"):
+                        matches = True
+                        break
+                
+                if matches:
+                    dist_files.append(f)
+        else:
+            dist_files = all_dist_files
+        
         if not dist_files:
-            raise ValueError(f"No distribution files found in {self.dist_dir}")
+            if self.package_name and self.version:
+                raise ValueError(
+                    f"No distribution files found matching package '{self.package_name}' "
+                    f"version '{self.version}' in {self.dist_dir}"
+                )
+            else:
+                raise ValueError(f"No distribution files found in {self.dist_dir}")
 
         username, password = self._get_credentials()
         repo_url = self._get_repository_url()

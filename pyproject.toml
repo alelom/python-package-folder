@@ -53,6 +53,7 @@ dev = [
     "basedpyright>=1.29.1",
     "funlog>=0.2.1",
     "sysappend>=2.0.0",
+    "twine>=6.2.0",
 ]
 
 [project.scripts]

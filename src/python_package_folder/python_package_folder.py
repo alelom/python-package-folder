@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from .manager import BuildManager
+from .utils import find_project_root, find_source_directory
 
 
 def main() -> int:
@@ -35,13 +36,12 @@ def main() -> int:
     parser.add_argument(
         "--project-root",
         type=Path,
-        default=Path.cwd(),
-        help="Root directory of the project (default: current directory)",
+        help="Root directory of the project (auto-detected from pyproject.toml if not specified)",
     )
     parser.add_argument(
         "--src-dir",
         type=Path,
-        help="Source directory (default: project_root/src)",
+        help="Source directory to build (default: auto-detected from current directory or project_root/src)",
     )
     parser.add_argument(
         "--analyze-only",
@@ -77,7 +77,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--version",
-        help="Set a specific version before building (PEP 440 format, e.g., '1.2.3')",
+        help="Set a specific version before building (PEP 440 format, e.g., '1.2.3'). Required for subfolder builds.",
+    )
+    parser.add_argument(
+        "--package-name",
+        help="Package name for subfolder builds (default: derived from source directory name)",
     )
     parser.add_argument(
         "--no-restore-versioning",
@@ -88,7 +92,32 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        manager = BuildManager(args.project_root, args.src_dir)
+        # Auto-detect project root if not specified
+        if args.project_root:
+            project_root = Path(args.project_root).resolve()
+        else:
+            project_root = find_project_root()
+            if project_root is None:
+                print(
+                    "Error: Could not find project root (pyproject.toml not found).\n"
+                    "Please run from a directory with pyproject.toml or specify --project-root",
+                    file=sys.stderr,
+                )
+                return 1
+            print(f"Auto-detected project root: {project_root}")
+
+        # Determine source directory
+        if args.src_dir:
+            src_dir = Path(args.src_dir).resolve()
+        else:
+            # Auto-detect: use current directory if it has Python files, otherwise use project_root/src
+            src_dir = find_source_directory(project_root)
+            if src_dir:
+                print(f"Auto-detected source directory: {src_dir}")
+            else:
+                src_dir = project_root / "src"
+
+        manager = BuildManager(project_root, src_dir)
 
         if args.analyze_only:
             external_deps = manager.prepare_build()
@@ -99,9 +128,29 @@ def main() -> int:
             return 0
 
         def build_cmd() -> None:
-            result = subprocess.run(args.build_command, shell=True, check=False)
+            # Run build command from project root to ensure pyproject.toml is found
+            result = subprocess.run(
+                args.build_command,
+                shell=True,
+                check=False,
+                cwd=project_root,
+            )
             if result.returncode != 0:
                 sys.exit(result.returncode)
+
+        # Check if building a subfolder (not the main src/)
+        is_subfolder = not src_dir.is_relative_to(project_root / "src") or (
+            src_dir != project_root / "src" and src_dir != project_root
+        )
+
+        # For subfolder builds, version is required
+        if is_subfolder and not args.version and (not args.analyze_only):
+            print(
+                "Error: --version is required when building from a subfolder.\n"
+                "Subfolders must be built as separate packages with their own version.",
+                file=sys.stderr,
+            )
+            return 1
 
         if args.publish:
             manager.build_and_publish(
@@ -113,27 +162,51 @@ def main() -> int:
                 skip_existing=args.skip_existing,
                 version=args.version,
                 restore_versioning=not args.no_restore_versioning,
+                package_name=args.package_name,
             )
         else:
             # Handle version setting even without publishing
             if args.version:
-                from .version import VersionManager
+                # Check if subfolder build
+                if is_subfolder:
+                    from .subfolder_build import SubfolderBuildConfig
 
-                version_manager = VersionManager(args.project_root)
-                original_version = version_manager.get_current_version()
-                try:
-                    print(f"Setting version to {args.version}...")
-                    version_manager.set_version(args.version)
-                    manager.run_build(build_cmd)
-                    if not args.no_restore_versioning:
-                        if original_version:
-                            version_manager.set_version(original_version)
-                        else:
-                            version_manager.restore_dynamic_versioning()
-                        print("Restored versioning configuration")
-                except Exception as e:
-                    print(f"Error managing version: {e}", file=sys.stderr)
-                    raise
+                    package_name = args.package_name or src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
+                    subfolder_config = SubfolderBuildConfig(
+                        project_root=project_root,
+                        src_dir=src_dir,
+                        package_name=package_name,
+                        version=args.version,
+                    )
+                    try:
+                        subfolder_config.create_temp_pyproject()
+                        manager.run_build(build_cmd)
+                        if not args.no_restore_versioning:
+                            subfolder_config.restore()
+                            print("Restored original pyproject.toml")
+                    except Exception as e:
+                        print(f"Error managing subfolder build: {e}", file=sys.stderr)
+                        if subfolder_config:
+                            subfolder_config.restore()
+                        raise
+                else:
+                    from .version import VersionManager
+
+                    version_manager = VersionManager(project_root)
+                    original_version = version_manager.get_current_version()
+                    try:
+                        print(f"Setting version to {args.version}...")
+                        version_manager.set_version(args.version)
+                        manager.run_build(build_cmd)
+                        if not args.no_restore_versioning:
+                            if original_version:
+                                version_manager.set_version(original_version)
+                            else:
+                                version_manager.restore_dynamic_versioning()
+                            print("Restored versioning configuration")
+                    except Exception as e:
+                        print(f"Error managing version: {e}", file=sys.stderr)
+                        raise
             else:
                 manager.run_build(build_cmd)
 
