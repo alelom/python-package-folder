@@ -66,10 +66,55 @@ jobs:
         run: uv run pytest --cov=src/python_package_folder --cov-report=xml --cov-report=term tests/
 
       - name: Generate coverage badge
-        uses: tj-actions/coverage-badge@v4
-        with:
-          output: coverage.svg
-          fail_below_threshold: false
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        run: |
+          python -c "
+          import xml.etree.ElementTree as ET
+          import re
+          
+          # Parse coverage.xml
+          tree = ET.parse('coverage.xml')
+          root = tree.getroot()
+          
+          # Get coverage percentage
+          line_rate = float(root.get('line-rate', 0))
+          coverage_percent = int(line_rate * 100)
+          
+          # Determine color based on coverage
+          if coverage_percent >= 80:
+              color = '44cc11'
+          elif coverage_percent >= 60:
+              color = 'dfb317'
+          elif coverage_percent >= 40:
+              color = 'fe7d37'
+          else:
+              color = 'e05d44'
+          
+          # Generate SVG badge
+          svg = f'''<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"99\" height=\"20\">
+            <linearGradient id=\"b\" x2=\"0\" y2=\"100%\">
+              <stop offset=\"0\" stop-color=\"#bbb\" stop-opacity=\".1\"/>
+              <stop offset=\"1\" stop-opacity=\".1\"/>
+            </linearGradient>
+            <mask id=\"a\">
+              <rect width=\"99\" height=\"20\" rx=\"3\" fill=\"#fff\"/>
+            </mask>
+            <g mask=\"url(#a)\">
+              <path fill=\"#555\" d=\"M0 0h63v20H0z\"/>
+              <path fill=\"#{color}\" d=\"M63 0h36v20H63z\"/>
+              <path fill=\"url(#b)\" d=\"M0 0h99v20H0z\"/>
+            </g>
+            <g fill=\"#fff\" text-anchor=\"middle\" font-family=\"DejaVu Sans,Verdana,Geneva,sans-serif\" font-size=\"11\">
+              <text x=\"31.5\" y=\"15\" fill=\"#010101\" fill-opacity=\".3\">coverage</text>
+              <text x=\"31.5\" y=\"14\">coverage</text>
+              <text x=\"81\" y=\"15\" fill=\"#010101\" fill-opacity=\".3\">{coverage_percent}%</text>
+              <text x=\"81\" y=\"14\">{coverage_percent}%</text>
+            </g>
+          </svg>'''
+          
+          with open('coverage.svg', 'w') as f:
+              f.write(svg)
+          "
 
       - name: Commit coverage badge
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
