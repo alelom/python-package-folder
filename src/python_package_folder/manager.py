@@ -42,7 +42,12 @@ class BuildManager:
         copied_dirs: List of directory paths that were copied (for cleanup)
     """
 
-    def __init__(self, project_root: Path, src_dir: Path | None = None, exclude_patterns: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        src_dir: Path | None = None,
+        exclude_patterns: list[str] | None = None,
+    ) -> None:
         """
         Initialize the build manager.
 
@@ -77,7 +82,9 @@ class BuildManager:
         self.copied_files: list[Path] = []
         self.copied_dirs: list[Path] = []
         self.exclude_patterns = exclude_patterns or []
-        self.finder = ExternalDependencyFinder(self.project_root, self.src_dir, exclude_patterns=exclude_patterns)
+        self.finder = ExternalDependencyFinder(
+            self.project_root, self.src_dir, exclude_patterns=exclude_patterns
+        )
 
         # Check if it's a valid Python package directory
         if not any(self.src_dir.glob("*.py")) and not (self.src_dir / "__init__.py").exists():
@@ -247,9 +254,18 @@ class BuildManager:
             src: Source directory
             dst: Destination directory
         """
-        default_patterns = ["_SS", "__SS", "_sandbox", "__sandbox", "_skip", "__skip", "_test", "__test__"]
+        default_patterns = [
+            "_SS",
+            "__SS",
+            "_sandbox",
+            "__sandbox",
+            "_skip",
+            "__skip",
+            "_test",
+            "__test__",
+        ]
         exclude_patterns = default_patterns + self.exclude_patterns
-        
+
         def should_exclude(path: Path) -> bool:
             """Check if a path should be excluded."""
             # Check each component of the path
@@ -268,7 +284,7 @@ class BuildManager:
         for item in src.iterdir():
             if should_exclude(item):
                 continue
-            
+
             src_item = src / item.name
             dst_item = dst / item.name
 
@@ -440,7 +456,9 @@ class BuildManager:
             if is_subfolder_build and version:
                 if not package_name:
                     # Derive package name from subfolder
-                    package_name = self.src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
+                    package_name = (
+                        self.src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
+                    )
                 print(f"Building subfolder as package '{package_name}' version '{version}'...")
                 subfolder_config = SubfolderBuildConfig(
                     project_root=self.project_root,
@@ -465,7 +483,7 @@ class BuildManager:
                 # Determine package name and version for filtering
                 publish_package_name = None
                 publish_version = version
-                
+
                 if is_subfolder_build and package_name:
                     publish_package_name = package_name
                 elif not is_subfolder_build:
@@ -477,7 +495,7 @@ class BuildManager:
                             import tomli as tomllib
                         except ImportError:
                             tomllib = None
-                    
+
                     if tomllib:
                         pyproject_path = self.project_root / "pyproject.toml"
                         if pyproject_path.exists():
@@ -485,7 +503,7 @@ class BuildManager:
                                 data = tomllib.load(f)
                                 if "project" in data and "name" in data["project"]:
                                     publish_package_name = data["project"]["name"]
-                
+
                 publisher = Publisher(
                     repository=repository,
                     dist_dir=self.project_root / "dist",

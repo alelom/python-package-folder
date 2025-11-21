@@ -200,4 +200,3 @@ class TestPublisher:
 
         assert username == "__token__"
         assert password == "pypi-AgENdGVzdC5weXBpLm9yZwIk"
-

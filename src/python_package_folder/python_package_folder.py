@@ -183,7 +183,9 @@ def main() -> int:
                 if is_subfolder:
                     from .subfolder_build import SubfolderBuildConfig
 
-                    package_name = args.package_name or src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
+                    package_name = args.package_name or src_dir.name.replace("_", "-").replace(
+                        " ", "-"
+                    ).lower().strip("-")
                     subfolder_config = SubfolderBuildConfig(
                         project_root=project_root,
                         src_dir=src_dir,

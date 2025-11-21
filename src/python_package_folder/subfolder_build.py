@@ -71,11 +71,11 @@ class SubfolderBuildConfig:
         # Remove any leading/trailing hyphens
         name = name.strip("-")
         return name
-    
+
     def _get_package_structure(self) -> tuple[str, list[str]]:
         """
         Determine the package structure for hatchling.
-        
+
         Returns:
             Tuple of (packages_path, package_dirs) where:
             - packages_path: The path to the directory containing packages
@@ -83,25 +83,25 @@ class SubfolderBuildConfig:
         """
         # Check if src_dir itself is a package (has __init__.py)
         has_init = (self.src_dir / "__init__.py").exists()
-        
+
         # Check for Python files directly in src_dir
         py_files = list(self.src_dir.glob("*.py"))
         has_py_files = bool(py_files)
-        
+
         # Calculate relative path
         try:
             rel_path = self.src_dir.relative_to(self.project_root)
             packages_path = str(rel_path).replace("\\", "/")
         except ValueError:
             packages_path = None
-        
+
         # If src_dir has Python files but no __init__.py, we need to make it a package
         # or include it as a module directory
         if has_py_files and not has_init:
             # For flat structures, we include the directory itself
             # Hatchling will treat Python files in the directory as modules
             return packages_path, [packages_path] if packages_path else []
-        
+
         # If it's a package or has subpackages, return the path
         return packages_path, [packages_path] if packages_path else []
 
@@ -182,10 +182,14 @@ class SubfolderBuildConfig:
                 data["dependency-groups"].update(parent_dependency_group)
 
             # For now, use string manipulation (tomli-w not in stdlib)
-            modified_content = self._modify_pyproject_string(original_content, parent_dependency_group)
+            modified_content = self._modify_pyproject_string(
+                original_content, parent_dependency_group
+            )
         else:
             # Use string manipulation
-            modified_content = self._modify_pyproject_string(original_content, parent_dependency_group)
+            modified_content = self._modify_pyproject_string(
+                original_content, parent_dependency_group
+            )
 
         # Write the modified content
         original_pyproject.write_text(modified_content, encoding="utf-8")
@@ -196,7 +200,9 @@ class SubfolderBuildConfig:
 
         return original_pyproject
 
-    def _modify_pyproject_string(self, content: str, dependency_group: dict[str, list[str]] | None = None) -> str:
+    def _modify_pyproject_string(
+        self, content: str, dependency_group: dict[str, list[str]] | None = None
+    ) -> str:
         """Modify pyproject.toml content using string manipulation."""
         lines = content.split("\n")
         result = []
@@ -244,7 +250,7 @@ class SubfolderBuildConfig:
                 result.append(line)
             elif in_hatch_build:
                 # Modify packages path
-                if re.match(r'^\s*packages\s*=', line):
+                if re.match(r"^\s*packages\s*=", line):
                     if package_dirs:
                         packages_str = ", ".join(f'"{p}"' for p in package_dirs)
                         result.append(f"packages = [{packages_str}]")
@@ -268,17 +274,17 @@ class SubfolderBuildConfig:
                 result.append(line)
             elif in_project:
                 # Modify name
-                if re.match(r'^\s*name\s*=', line):
+                if re.match(r"^\s*name\s*=", line):
                     result.append(f'name = "{self.package_name}"')
                     name_set = True
                     continue
                 # Modify version
-                elif re.match(r'^\s*version\s*=', line):
+                elif re.match(r"^\s*version\s*=", line):
                     result.append(f'version = "{self.version}"')
                     version_set = True
                     continue
                 # Remove version from dynamic
-                elif re.match(r'^\s*dynamic\s*=\s*\[', line):
+                elif re.match(r"^\s*dynamic\s*=\s*\[", line):
                     in_dynamic = True
                     # Remove "version" from the list
                     line = re.sub(r'"version"', "", line)
@@ -286,7 +292,7 @@ class SubfolderBuildConfig:
                     line = re.sub(r",\s*,", ",", line)
                     line = re.sub(r"\[\s*,", "[", line)
                     line = re.sub(r",\s*\]", "]", line)
-                    if re.match(r'^\s*dynamic\s*=\s*\[\s*\]', line):
+                    if re.match(r"^\s*dynamic\s*=\s*\[\s*\]", line):
                         continue  # Skip empty dynamic list
                 elif in_dynamic and "]" in line:
                     in_dynamic = False
@@ -309,7 +315,7 @@ class SubfolderBuildConfig:
         if in_hatch_build and not packages_set and package_dirs:
             packages_str = ", ".join(f'"{p}"' for p in package_dirs)
             result.append(f"packages = [{packages_str}]")
-        
+
         # Ensure packages is always set for subfolder builds
         if not packages_set and package_dirs:
             # Add the section if it doesn't exist
@@ -336,30 +342,32 @@ class SubfolderBuildConfig:
                         break
 
             # Format dependency group
-            if insert_index < len(result) and result[insert_index].strip().startswith("[dependency-groups]"):
+            if insert_index < len(result) and result[insert_index].strip().startswith(
+                "[dependency-groups]"
+            ):
                 # Replace existing section
                 dep_lines = ["[dependency-groups]"]
                 for group_name, deps in dependency_group.items():
-                    dep_lines.append(f'{group_name} = [')
+                    dep_lines.append(f"{group_name} = [")
                     for dep in deps:
                         dep_lines.append(f'    "{dep}",')
-                    dep_lines.append(']')
+                    dep_lines.append("]")
                     dep_lines.append("")
-                
+
                 # Find end of existing dependency-groups section
                 end_index = insert_index + 1
                 while end_index < len(result) and not result[end_index].strip().startswith("["):
                     end_index += 1
-                
+
                 result[insert_index:end_index] = dep_lines
             else:
                 # Insert new section
                 dep_lines = ["", "[dependency-groups]"]
                 for group_name, deps in dependency_group.items():
-                    dep_lines.append(f'{group_name} = [')
+                    dep_lines.append(f"{group_name} = [")
                     for dep in deps:
                         dep_lines.append(f'    "{dep}",')
-                    dep_lines.append(']')
+                    dep_lines.append("]")
                 result[insert_index:insert_index] = dep_lines
 
         return "\n".join(result)
@@ -367,14 +375,14 @@ class SubfolderBuildConfig:
     def _handle_readme(self) -> None:
         """
         Handle README file for subfolder builds.
-        
+
         - If README exists in subfolder, copy it to project root
         - If no README exists, create a minimal one with folder name
         - Backup original README if it exists in project root
         """
         # Common README file names
         readme_names = ["README.md", "README.rst", "README.txt", "README"]
-        
+
         # Check for README in subfolder
         subfolder_readme = None
         for name in readme_names:
@@ -382,7 +390,7 @@ class SubfolderBuildConfig:
             if readme_path.exists():
                 subfolder_readme = readme_path
                 break
-        
+
         # Check for existing README in project root
         project_readme = None
         for name in readme_names:
@@ -390,13 +398,13 @@ class SubfolderBuildConfig:
             if readme_path.exists():
                 project_readme = readme_path
                 break
-        
+
         # Backup original README if it exists
         if project_readme:
             backup_path = self.project_root / f"{project_readme.name}.backup"
             shutil.copy2(project_readme, backup_path)
             self.original_readme_backup = backup_path
-        
+
         # Use subfolder README if it exists
         if subfolder_readme:
             # Copy subfolder README to project root
@@ -421,7 +429,7 @@ class SubfolderBuildConfig:
                 except Exception:
                     pass  # Ignore errors during cleanup
             self._temp_init_created = False
-        
+
         # Restore original README if it was backed up
         backup_path = self.original_readme_backup
         had_backup = backup_path and backup_path.exists()
@@ -432,12 +440,16 @@ class SubfolderBuildConfig:
             shutil.copy2(backup_path, original_readme_path)
             backup_path.unlink()
             self.original_readme_backup = None
-        
+
         # Remove temporary README if we created it or copied from subfolder
         # Only remove if it's different from the original we just restored
         if self.temp_readme and self.temp_readme.exists():
             # If we restored an original README and the temp is the same file, don't remove it
-            if had_backup and original_readme_path and self.temp_readme.samefile(original_readme_path):
+            if (
+                had_backup
+                and original_readme_path
+                and self.temp_readme.samefile(original_readme_path)
+            ):
                 # Temp README is the same as the restored original, so don't remove it
                 pass
             else:
@@ -447,7 +459,7 @@ class SubfolderBuildConfig:
                 except Exception:
                     pass  # Ignore errors during cleanup
             self.temp_readme = None
-        
+
         # Restore original pyproject.toml
         if self.original_pyproject_backup and self.original_pyproject_backup.exists():
             original_pyproject = self.project_root / "pyproject.toml"
@@ -463,4 +475,3 @@ class SubfolderBuildConfig:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # noqa: ARG002
         """Context manager exit - always restore."""
         self.restore()
-

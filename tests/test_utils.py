@@ -45,7 +45,9 @@ class TestFindProjectRoot:
 
         assert found is None
 
-    def test_find_project_root_defaults_to_cwd(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_find_project_root_defaults_to_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that find_project_root defaults to current directory."""
         project_root = tmp_path / "project"
         project_root.mkdir()
@@ -156,4 +158,3 @@ class TestIsPythonPackageDirectory:
         pkg_dir.mkdir()
 
         assert is_python_package_directory(pkg_dir) is False
-

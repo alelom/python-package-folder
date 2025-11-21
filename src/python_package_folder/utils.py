@@ -104,4 +104,3 @@ def is_python_package_directory(path: Path) -> bool:
         return True
 
     return False
-

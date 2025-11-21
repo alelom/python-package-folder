@@ -148,7 +148,7 @@ class VersionManager:
                 continue
 
             # Remove 'version' from dynamic list if present
-            if re.match(r'^\s*dynamic\s*=\s*\[', line):
+            if re.match(r"^\s*dynamic\s*=\s*\[", line):
                 # Check if version is in the list
                 if "version" in line:
                     # Remove version from the list
@@ -158,7 +158,7 @@ class VersionManager:
                     line = re.sub(r"\[\s*,", "[", line)  # Remove leading comma
                     line = re.sub(r",\s*\]", "]", line)  # Remove trailing comma
                     # If dynamic list is now empty, skip the line
-                    if re.match(r'^\s*dynamic\s*=\s*\[\s*\]', line):
+                    if re.match(r"^\s*dynamic\s*=\s*\[\s*\]", line):
                         continue
 
             result.append(line)
@@ -182,7 +182,7 @@ class VersionManager:
                     result.append(f'version = "{version}"')
                 in_project = False
                 result.append(line)
-            elif in_project and re.match(r'^\s*version\s*=', line):
+            elif in_project and re.match(r"^\s*version\s*=", line):
                 # Replace existing version
                 result.append(f'version = "{version}"')
                 version_set = True
@@ -251,4 +251,3 @@ class VersionManager:
             result.append("bump = true")
 
         self.pyproject_path.write_text("\n".join(result), encoding="utf-8")
-

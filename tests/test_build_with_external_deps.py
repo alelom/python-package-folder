@@ -36,9 +36,7 @@ def test_project_root(tmp_path: Path) -> Path:
     # Create _SS subdirectory with a file that should be excluded
     ss_dir = utility_folder / "_SS"
     ss_dir.mkdir()
-    (ss_dir / "some_superseded_file.py").write_text(
-        "def superseded_function():\n    pass"
-    )
+    (ss_dir / "some_superseded_file.py").write_text("def superseded_function():\n    pass")
 
     # Create subfolder_to_build (target directory)
     subfolder_to_build = folder_structure / "subfolder_to_build"
@@ -246,11 +244,16 @@ class TestBuildManager:
         # The key is that we don't want to see significant divergence
         assert len(copied_paths1) > 0, "First call should copy some files"
         assert len(copied_paths2) > 0, "Second call should have some files"
-        
+
         # The paths should be similar (allowing for some variation due to idempotency checks)
         # At minimum, the unique set of paths should be consistent
-        assert copied_paths1 == copied_paths2 or copied_paths1.issubset(copied_paths2) or copied_paths2.issubset(copied_paths1), \
+        assert (
+            copied_paths1 == copied_paths2
+            or copied_paths1.issubset(copied_paths2)
+            or copied_paths2.issubset(copied_paths1)
+        ), (
             f"Copied paths should be consistent between calls. First: {copied_paths1}, Second: {copied_paths2}"
+        )
 
     def test_cleanup_removes_copied_files(self, test_project_root: Path) -> None:
         """Test that cleanup removes all copied files."""
@@ -400,7 +403,7 @@ class TestExclusionPatterns:
         src_dir = test_project_root / "folder_structure" / "subfolder_to_build"
         manager = BuildManager(test_project_root, src_dir)
 
-        external_deps = manager.prepare_build()
+        manager.prepare_build()
 
         # Verify utility_folder was copied
         copied_utility = src_dir / "utility_folder"
@@ -424,14 +427,16 @@ class TestExclusionPatterns:
         manager = BuildManager(project_root, src_dir)
 
         try:
-            external_deps = manager.prepare_build()
+            manager.prepare_build()
 
             # Verify utility_folder was copied
             copied_utility = src_dir / "utility_folder"
             if copied_utility.exists():
                 # Verify _SS directory was NOT copied
                 copied_ss = copied_utility / "_SS"
-                assert not copied_ss.exists(), "_SS directory should be excluded from real structure"
+                assert not copied_ss.exists(), (
+                    "_SS directory should be excluded from real structure"
+                )
 
                 # Verify the superseded file was NOT copied
                 copied_superseded = copied_ss / "some_superseded_file.py"
@@ -448,11 +453,9 @@ class TestExclusionPatterns:
         (custom_excluded / "skip_file.py").write_text("def skip(): pass")
 
         src_dir = test_project_root / "folder_structure" / "subfolder_to_build"
-        manager = BuildManager(
-            test_project_root, src_dir, exclude_patterns=["custom_skip"]
-        )
+        manager = BuildManager(test_project_root, src_dir, exclude_patterns=["custom_skip"])
 
-        external_deps = manager.prepare_build()
+        manager.prepare_build()
 
         # Verify custom_skip was NOT copied
         copied_custom = src_dir / "custom_skip"
@@ -463,7 +466,7 @@ class TestExclusionPatterns:
     def test_exclude_multiple_patterns(self, test_project_root: Path) -> None:
         """Test that multiple exclusion patterns work."""
         folder_structure = test_project_root / "folder_structure"
-        
+
         # Create directories with different exclusion patterns
         sandbox_dir = folder_structure / "_sandbox"
         sandbox_dir.mkdir()
@@ -476,12 +479,12 @@ class TestExclusionPatterns:
         src_dir = test_project_root / "folder_structure" / "subfolder_to_build"
         manager = BuildManager(test_project_root, src_dir)
 
-        external_deps = manager.prepare_build()
+        manager.prepare_build()
 
         # Verify excluded directories were NOT copied
         copied_sandbox = src_dir / "_sandbox"
         copied_skip = src_dir / "_skip"
-        
+
         assert not copied_sandbox.exists(), "_sandbox should be excluded"
         assert not copied_skip.exists(), "_skip should be excluded"
 
@@ -490,13 +493,13 @@ class TestExclusionPatterns:
     def test_exclude_nested_ss_directories(self, test_project_root: Path) -> None:
         """Test that _SS directories are excluded even when nested."""
         folder_structure = test_project_root / "folder_structure"
-        
+
         # Create a nested structure with _SS
         nested_package = folder_structure / "nested_package"
         nested_package.mkdir()
         (nested_package / "__init__.py").write_text("")
         (nested_package / "module.py").write_text("def func(): pass")
-        
+
         # Create nested _SS directory
         nested_ss = nested_package / "_SS"
         nested_ss.mkdir()
@@ -516,7 +519,7 @@ from some_globals import SOME_GLOBAL_VARIABLE
         src_dir = subfolder_to_build
         manager = BuildManager(test_project_root, src_dir)
 
-        external_deps = manager.prepare_build()
+        manager.prepare_build()
 
         # Verify nested_package was copied
         copied_nested = src_dir / "nested_package"
@@ -544,7 +547,9 @@ from some_globals import SOME_GLOBAL_VARIABLE
             assert "_SS" not in source_str, f"Dependency should not include _SS: {dep.source_path}"
             # Check all path components
             for part in dep.source_path.parts:
-                assert not part.startswith("_SS"), f"Path component should not start with _SS: {part}"
+                assert not part.startswith("_SS"), (
+                    f"Path component should not start with _SS: {part}"
+                )
 
 
 class TestEdgeCases:

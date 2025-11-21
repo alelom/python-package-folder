@@ -28,7 +28,9 @@ class ExternalDependencyFinder:
         analyzer: ImportAnalyzer instance for analyzing imports
     """
 
-    def __init__(self, project_root: Path, src_dir: Path, exclude_patterns: list[str] | None = None) -> None:
+    def __init__(
+        self, project_root: Path, src_dir: Path, exclude_patterns: list[str] | None = None
+    ) -> None:
         """
         Initialize the dependency finder.
 
@@ -41,7 +43,16 @@ class ExternalDependencyFinder:
         self.src_dir = src_dir.resolve()
         self.analyzer = ImportAnalyzer(project_root)
         # Patterns for directories/files to exclude (sandbox, skip, etc.)
-        default_patterns = ["_SS", "__SS", "_sandbox", "__sandbox", "_skip", "__skip", "_test", "__test__"]
+        default_patterns = [
+            "_SS",
+            "__SS",
+            "_sandbox",
+            "__sandbox",
+            "_skip",
+            "__skip",
+            "_test",
+            "__test__",
+        ]
         self.exclude_patterns = default_patterns + (exclude_patterns or [])
 
     def find_external_dependencies(self, python_files: list[Path]) -> list[ExternalDependency]:
@@ -78,7 +89,6 @@ class ExternalDependencyFinder:
                     # Otherwise, copy just the individual file
                     if source_path.is_file():
                         parent_dir = source_path.parent
-                        module_parts = imp.module_name.split(".")
 
                         # Only copy parent directory if:
                         # 1. It's a package (has __init__.py), OR
@@ -86,13 +96,15 @@ class ExternalDependencyFinder:
                         # But only copy the immediate parent, not entire directory trees
                         parent_is_package = (parent_dir / "__init__.py").exists()
                         files_are_imported = True  # Always true when processing an import
-                        
+
                         # Only copy immediate parent directory, not grandparent directories
                         # This prevents copying entire trees like models/Information_extraction
                         # when we only need models/Information_extraction/_shared_ie
                         should_copy_dir = (
                             not self._should_exclude_path(parent_dir)
-                            and (parent_is_package or files_are_imported)  # Package OR files imported
+                            and (
+                                parent_is_package or files_are_imported
+                            )  # Package OR files imported
                             and not parent_dir.is_relative_to(self.src_dir)
                             and not self.src_dir.is_relative_to(parent_dir)
                             and parent_dir != self.project_root

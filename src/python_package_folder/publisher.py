@@ -76,7 +76,9 @@ class Publisher:
                 self.repository = Repository(repository.lower())
             except ValueError as err:
                 valid_repos = ", ".join(r.value for r in Repository)
-                raise ValueError(f"Invalid repository: {repository}. Must be one of: {valid_repos}") from err
+                raise ValueError(
+                    f"Invalid repository: {repository}. Must be one of: {valid_repos}"
+                ) from err
         else:
             self.repository = repository
 
@@ -119,13 +121,17 @@ class Publisher:
         # Try to get from keyring if available
         if keyring and not username:
             try:
-                username = keyring.get_password(f"python-package-folder-{self.repository.value}", "username")
+                username = keyring.get_password(
+                    f"python-package-folder-{self.repository.value}", "username"
+                )
             except Exception:
                 pass
 
         if keyring and not password:
             try:
-                password = keyring.get_password(f"python-package-folder-{self.repository.value}", username or "token")
+                password = keyring.get_password(
+                    f"python-package-folder-{self.repository.value}", username or "token"
+                )
             except Exception:
                 pass
 
@@ -157,8 +163,12 @@ class Publisher:
         # Store in keyring if available
         if keyring:
             try:
-                keyring.set_password(f"python-package-folder-{self.repository.value}", "username", username)
-                keyring.set_password(f"python-package-folder-{self.repository.value}", username, password)
+                keyring.set_password(
+                    f"python-package-folder-{self.repository.value}", "username", username
+                )
+                keyring.set_password(
+                    f"python-package-folder-{self.repository.value}", username, password
+                )
             except Exception:
                 # Keyring storage is optional, continue if it fails
                 pass
@@ -185,15 +195,13 @@ class Publisher:
             subprocess.CalledProcessError: If publishing fails
         """
         if not self._check_twine_installed():
-            raise ValueError(
-                "twine is required for publishing. Install it with: pip install twine"
-            )
+            raise ValueError("twine is required for publishing. Install it with: pip install twine")
 
         if not self.dist_dir.exists():
             raise ValueError(f"Distribution directory not found: {self.dist_dir}")
 
         all_dist_files = list(self.dist_dir.glob("*.whl")) + list(self.dist_dir.glob("*.tar.gz"))
-        
+
         # Filter files by package name and version if provided
         if self.package_name and self.version:
             # Normalize package name - try both hyphen and underscore variants
@@ -201,11 +209,11 @@ class Publisher:
             name_hyphen = self.package_name.replace("_", "-").lower()
             name_underscore = self.package_name.replace("-", "_").lower()
             name_original = self.package_name.lower()
-            
+
             # Try all name variants
             name_variants = {name_hyphen, name_underscore, name_original}
             version_str = self.version
-            
+
             dist_files = []
             for f in all_dist_files:
                 # Get the base filename without extension
@@ -215,7 +223,7 @@ class Publisher:
                 if f.suffix == ".gz" and stem.endswith(".tar"):
                     # Handle .tar.gz files
                     stem = stem[:-4]  # Remove .tar
-                
+
                 # Check if filename starts with any name variant followed by version
                 matches = False
                 for name_variant in name_variants:
@@ -223,12 +231,12 @@ class Publisher:
                     if stem.startswith(f"{name_variant}-{version_str}"):
                         matches = True
                         break
-                
+
                 if matches:
                     dist_files.append(f)
         else:
             dist_files = all_dist_files
-        
+
         if not dist_files:
             if self.package_name and self.version:
                 raise ValueError(
@@ -300,4 +308,3 @@ For Azure Artifacts:
   - Repository URL: Your Azure Artifacts feed URL
     Example: https://pkgs.dev.azure.com/ORG/PROJECT/_packaging/FEED/pypi/upload
 """
-

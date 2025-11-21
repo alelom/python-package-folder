@@ -70,7 +70,7 @@ class TestVersionManager:
         # Check version was set in file
         content = (test_pyproject / "pyproject.toml").read_text()
         assert '"2.0.0"' in content or "'2.0.0'" in content
-        
+
         # Check version can be read back (may need to re-read)
         # The set_version modifies the file, so get_current_version should work
         content_after = (test_pyproject / "pyproject.toml").read_text()
@@ -129,9 +129,7 @@ class TestVersionManager:
         assert "[tool.hatch.version]" in content
         assert "[tool.uv-dynamic-versioning]" in content
 
-    def test_restore_dynamic_versioning_with_existing_version(
-        self, test_pyproject: Path
-    ) -> None:
+    def test_restore_dynamic_versioning_with_existing_version(self, test_pyproject: Path) -> None:
         """Test restoring dynamic versioning when static version exists."""
         manager = VersionManager(test_pyproject)
 
@@ -145,4 +143,3 @@ class TestVersionManager:
         content = (test_pyproject / "pyproject.toml").read_text()
         # Version should be removed or dynamic should be added
         assert "[tool.hatch.version]" in content or 'dynamic = ["version"]' in content
-
