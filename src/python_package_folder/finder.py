@@ -80,16 +80,19 @@ class ExternalDependencyFinder:
                         parent_dir = source_path.parent
                         module_parts = imp.module_name.split(".")
 
-                        # Only copy parent directory if it's a package (has __init__.py)
-                        # This ensures we maintain package structure when needed,
-                        # but don't copy entire directory trees unnecessarily
+                        # Only copy parent directory if:
+                        # 1. It's a package (has __init__.py), OR
+                        # 2. Files from it are actually imported (which is the case here)
+                        # But only copy the immediate parent, not entire directory trees
                         parent_is_package = (parent_dir / "__init__.py").exists()
                         files_are_imported = True  # Always true when processing an import
-                        is_multi_level = len(module_parts) > 2
                         
+                        # Only copy immediate parent directory, not grandparent directories
+                        # This prevents copying entire trees like models/Information_extraction
+                        # when we only need models/Information_extraction/_shared_ie
                         should_copy_dir = (
                             not self._should_exclude_path(parent_dir)
-                            and (parent_is_package or (files_are_imported and is_multi_level))  # Package OR (files imported AND multi-level)
+                            and (parent_is_package or files_are_imported)  # Package OR files imported
                             and not parent_dir.is_relative_to(self.src_dir)
                             and not self.src_dir.is_relative_to(parent_dir)
                             and parent_dir != self.project_root
@@ -189,8 +192,10 @@ class ExternalDependencyFinder:
         """
         # Check each component of the path
         for part in path.parts:
-            if any(part.startswith(pattern) or part == pattern for pattern in self.exclude_patterns):
-                return True
+            for pattern in self.exclude_patterns:
+                # Match if part equals pattern or starts with pattern
+                if part == pattern or part.startswith(pattern):
+                    return True
         return False
 
     def _find_main_package(self) -> Path | None:
