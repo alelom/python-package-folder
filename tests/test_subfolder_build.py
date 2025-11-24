@@ -169,7 +169,7 @@ class TestSubfolderBuildConfig:
         assert restored_content == original_content
 
         # Check backup is removed
-        assert not (test_project_with_pyproject / "pyproject.toml.backup").exists()
+        assert not (test_project_with_pyproject / "pyproject.toml.original").exists()
 
     def test_restore_removes_temp_init(self, test_project_with_pyproject: Path) -> None:
         """Test that restore removes temporary __init__.py."""
@@ -405,9 +405,9 @@ requests = ">=2.0.0"
         assert 'name = "test-package"' not in content
         assert 'name = "subfolder"' not in content
 
-        # Verify backup was created
-        assert (project_root / "pyproject.toml.backup").exists()
-        backup_content = (project_root / "pyproject.toml.backup").read_text()
+        # Verify original was moved to backup location
+        assert (project_root / "pyproject.toml.original").exists()
+        backup_content = (project_root / "pyproject.toml.original").read_text()
         assert 'name = "test-package"' in backup_content
 
         # Verify flag is set
@@ -434,6 +434,11 @@ requests = ">=2.0.0"
         )
 
         config.create_temp_pyproject()
+
+        # Verify original content is preserved in backup (not modified)
+        backup_content = (project_root / "pyproject.toml.original").read_text()
+        assert backup_content == original_content
+
         config.restore()
 
         # Verify original is restored
@@ -441,7 +446,43 @@ requests = ">=2.0.0"
         assert restored_content == original_content
 
         # Verify backup is removed
-        assert not (project_root / "pyproject.toml.backup").exists()
+        assert not (project_root / "pyproject.toml.original").exists()
+
+    def test_root_pyproject_toml_never_modified(self, test_project_with_pyproject: Path) -> None:
+        """Test that root pyproject.toml is never modified, only moved and restored."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+        original_pyproject = project_root / "pyproject.toml"
+        original_content = original_pyproject.read_text()
+
+        # Create pyproject.toml in subfolder
+        (subfolder / "pyproject.toml").write_text(
+            '[project]\nname = "subfolder-package"\nversion = "3.0.0"\n'
+        )
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        config.create_temp_pyproject()
+
+        # Verify original was moved (not modified in place)
+        assert not original_pyproject.exists() or original_pyproject.read_text() != original_content
+        assert (project_root / "pyproject.toml.original").exists()
+        backup_content = (project_root / "pyproject.toml.original").read_text()
+        assert backup_content == original_content  # Original content preserved exactly
+
+        config.restore()
+
+        # Verify original is restored with exact same content
+        assert original_pyproject.exists()
+        restored_content = original_pyproject.read_text()
+        assert restored_content == original_content
+
+        # Verify backup is removed
+        assert not (project_root / "pyproject.toml.original").exists()
 
     def test_subfolder_pyproject_toml_without_parent_backup(
         self, test_project_with_pyproject: Path
@@ -477,7 +518,7 @@ version = "3.0.0"
         assert 'name = "subfolder-package"' in content
 
         # No backup should be created since parent didn't exist
-        assert not (project_root / "pyproject.toml.backup").exists()
+        assert not (project_root / "pyproject.toml.original").exists()
 
         # Restore original for cleanup
         parent_pyproject.write_text(original_content)
@@ -596,7 +637,7 @@ class TestSubfolderBuildTemporaryPyprojectCreation:
         assert 'packages = ["subfolder"]' in content or '"subfolder"' in content
 
         # Verify backup was created
-        assert (project_root / "pyproject.toml.backup").exists()
+        assert (project_root / "pyproject.toml.original").exists()
 
         # Cleanup
         config.restore()

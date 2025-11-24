@@ -36,6 +36,8 @@ class SubfolderBuildConfig:
     - Always ensures [build-system] section uses hatchling (replaces any existing build-system
       configuration from parent or subfolder)
     - Handles README files similarly (uses subfolder README if present)
+    - **Never modifies the root pyproject.toml**: The original file is temporarily moved to
+      pyproject.toml.original and restored after the build, ensuring the original is never modified
     """
 
     def __init__(
@@ -66,6 +68,7 @@ class SubfolderBuildConfig:
         self.dependency_group = dependency_group
         self.temp_pyproject: Path | None = None
         self.original_pyproject_backup: Path | None = None
+        self.original_pyproject_path: Path | None = None
         self._temp_init_created = False
         self.temp_readme: Path | None = None
         self.original_readme_backup: Path | None = None
@@ -205,6 +208,10 @@ class SubfolderBuildConfig:
         The [build-system] section is always set to use hatchling, even if the parent or
         subfolder pyproject.toml uses a different build backend (e.g., setuptools).
 
+        **Important**: The root pyproject.toml is never modified. Instead, it is temporarily
+        moved to pyproject.toml.original and restored after the build completes. This ensures
+        the original file remains unchanged.
+
         Returns:
             Path to the pyproject.toml file (either from subfolder or created temporary),
             or None if no parent pyproject.toml exists (in which case subfolder config is skipped)
@@ -228,20 +235,30 @@ class SubfolderBuildConfig:
             print(f"Using existing pyproject.toml from subfolder: {subfolder_pyproject}")
             self._used_subfolder_pyproject = True
 
-            # Backup the original project root pyproject.toml if it exists
+            # Store reference to original project root pyproject.toml
             original_pyproject = self.project_root / "pyproject.toml"
-            if original_pyproject.exists():
-                backup_path = self.project_root / "pyproject.toml.backup"
-                shutil.copy2(original_pyproject, backup_path)
-                self.original_pyproject_backup = backup_path
+            self.original_pyproject_path = original_pyproject
+
+            # Create temporary pyproject.toml file
+            temp_pyproject_path = self.project_root / "pyproject.toml.temp"
 
             # Read and adjust the subfolder pyproject.toml
             subfolder_content = subfolder_pyproject.read_text(encoding="utf-8")
             # Adjust packages path to be relative to project root
             adjusted_content = self._adjust_subfolder_pyproject_packages_path(subfolder_content)
 
-            # Write adjusted content to project root
-            original_pyproject.write_text(adjusted_content, encoding="utf-8")
+            # Write adjusted content to temporary file
+            temp_pyproject_path.write_text(adjusted_content, encoding="utf-8")
+            self.temp_pyproject = temp_pyproject_path
+
+            # If original pyproject.toml exists, temporarily move it
+            if original_pyproject.exists():
+                backup_path = self.project_root / "pyproject.toml.original"
+                original_pyproject.rename(backup_path)
+                self.original_pyproject_backup = backup_path
+
+            # Move temp file to pyproject.toml for the build
+            temp_pyproject_path.rename(original_pyproject)
             self.temp_pyproject = original_pyproject
 
             # Handle README file
@@ -270,9 +287,12 @@ class SubfolderBuildConfig:
 
         original_content = original_pyproject.read_text(encoding="utf-8")
 
-        # Create a backup
-        backup_path = self.project_root / "pyproject.toml.backup"
-        shutil.copy2(original_pyproject, backup_path)
+        # Store reference to original
+        self.original_pyproject_path = original_pyproject
+
+        # Temporarily move original to backup location
+        backup_path = self.project_root / "pyproject.toml.original"
+        original_pyproject.rename(backup_path)
         self.original_pyproject_backup = backup_path
 
         # Parse and modify the pyproject.toml
@@ -327,8 +347,12 @@ class SubfolderBuildConfig:
                 original_content, parent_dependency_group
             )
 
-        # Write the modified content
-        original_pyproject.write_text(modified_content, encoding="utf-8")
+        # Write the modified content to a temporary file
+        temp_pyproject_path = self.project_root / "pyproject.toml.temp"
+        temp_pyproject_path.write_text(modified_content, encoding="utf-8")
+
+        # Move temp file to pyproject.toml for the build
+        temp_pyproject_path.rename(original_pyproject)
         self.temp_pyproject = original_pyproject
 
         # Handle README file
@@ -585,9 +609,10 @@ class SubfolderBuildConfig:
         """
         Restore the original pyproject.toml and remove temporary __init__.py if created.
 
-        If a subfolder pyproject.toml was used, it restores the original project root
-        pyproject.toml from backup. If a temporary pyproject.toml was created, it
-        restores the original as well.
+        The root pyproject.toml is never modified during subfolder builds. Instead, it is
+        temporarily moved to pyproject.toml.original and then restored after the build.
+        This method removes the temporary pyproject.toml and restores the original from
+        the backup location, ensuring the original file is never modified.
         """
         # Remove temporary __init__.py if we created it
         if self._temp_init_created:
@@ -630,16 +655,26 @@ class SubfolderBuildConfig:
             self.temp_readme = None
 
         # Restore original pyproject.toml (only if we created/used one)
-        if (
-            self.temp_pyproject
-            and self.original_pyproject_backup
-            and self.original_pyproject_backup.exists()
-        ):
-            original_pyproject = self.project_root / "pyproject.toml"
-            shutil.copy2(self.original_pyproject_backup, original_pyproject)
-            self.original_pyproject_backup.unlink()
-            self.original_pyproject_backup = None
+        if self.temp_pyproject and self.original_pyproject_path:
+            original_pyproject = self.original_pyproject_path
+
+            # Remove the temporary pyproject.toml we created
+            if original_pyproject.exists():
+                try:
+                    original_pyproject.unlink()
+                except Exception as e:
+                    print(
+                        f"Warning: Could not remove temporary pyproject.toml: {e}",
+                        file=sys.stderr,
+                    )
+
+            # Restore the original pyproject.toml from backup if it existed
+            if self.original_pyproject_backup and self.original_pyproject_backup.exists():
+                self.original_pyproject_backup.rename(original_pyproject)
+                self.original_pyproject_backup = None
+
             self.temp_pyproject = None
+            self.original_pyproject_path = None
             self._used_subfolder_pyproject = False
 
     def __enter__(self) -> Self:
