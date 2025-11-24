@@ -415,7 +415,9 @@ class BuildManager:
 
         This method removes all files and directories that were copied during prepare_build().
         It also restores the original pyproject.toml if a temporary one was created for a
-        subfolder build. It handles errors gracefully and clears the internal tracking lists.
+        subfolder build. Additionally, it removes all .egg-info directories created during
+        the build process and cleans up any empty directories that remain after removing
+        copied files. It handles errors gracefully and clears the internal tracking lists.
 
         This is automatically called by run_build(), but you can call it manually if you
         use prepare_build() directly.
@@ -425,7 +427,7 @@ class BuildManager:
             manager = BuildManager(project_root=Path("."), src_dir=Path("src"))
             deps = manager.prepare_build()
             # ... do your build ...
-            manager.cleanup()  # Restores pyproject.toml and removes copied files
+            manager.cleanup()  # Restores pyproject.toml, removes copied files, .egg-info dirs, and empty dirs
             ```
         """
         # Restore subfolder config if it was created
@@ -457,6 +459,77 @@ class BuildManager:
 
         self.copied_files.clear()
         self.copied_dirs.clear()
+
+        # Remove all .egg-info directories in src_dir and project_root
+        self._cleanup_egg_info_dirs()
+
+        # Remove empty directories that may remain after cleanup
+        self._cleanup_empty_dirs()
+
+    def _cleanup_egg_info_dirs(self) -> None:
+        """
+        Remove all .egg-info directories in the source directory and project root.
+
+        These directories are created by setuptools during the build process and
+        should be cleaned up after the build completes.
+        """
+        # Search in src_dir and project_root
+        search_dirs = [self.src_dir, self.project_root]
+
+        for search_dir in search_dirs:
+            if not search_dir.exists():
+                continue
+
+            # Find all .egg-info directories
+            for egg_info_dir in search_dir.rglob("*.egg-info"):
+                if egg_info_dir.is_dir():
+                    try:
+                        shutil.rmtree(egg_info_dir)
+                        print(f"Removed .egg-info directory: {egg_info_dir}")
+                    except Exception as e:
+                        print(
+                            f"Warning: Could not remove .egg-info directory {egg_info_dir}: {e}",
+                            file=sys.stderr,
+                        )
+
+    def _cleanup_empty_dirs(self) -> None:
+        """
+        Remove empty directories in the source directory after cleanup.
+
+        After removing copied files and directories, some parent directories may
+        become empty. This method recursively removes empty directories starting
+        from the deepest level.
+        """
+        if not self.src_dir.exists():
+            return
+
+        # Collect all directories in src_dir, sorted by depth (deepest first)
+        all_dirs: list[Path] = []
+        for item in self.src_dir.rglob("*"):
+            if item.is_dir():
+                all_dirs.append(item)
+
+        # Sort by path depth (deepest first) so we remove children before parents
+        all_dirs.sort(key=lambda p: len(p.parts), reverse=True)
+
+        # Remove empty directories (but not src_dir itself)
+        for dir_path in all_dirs:
+            if dir_path == self.src_dir:
+                continue
+
+            try:
+                # Check if directory is empty
+                if dir_path.exists() and not any(dir_path.iterdir()):
+                    dir_path.rmdir()
+                    print(f"Removed empty directory: {dir_path}")
+            except (OSError, PermissionError):
+                # Directory not empty or permission error - skip it
+                pass
+            except Exception as e:
+                print(
+                    f"Warning: Could not remove directory {dir_path}: {e}",
+                    file=sys.stderr,
+                )
 
     def run_build(
         self,

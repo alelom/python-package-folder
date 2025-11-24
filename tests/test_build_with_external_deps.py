@@ -277,6 +277,36 @@ class TestBuildManager:
         assert len(manager.copied_files) == 0
         assert len(manager.copied_dirs) == 0
 
+    def test_cleanup_removes_egg_info_dirs(self, test_project_root: Path) -> None:
+        """Test that cleanup removes .egg-info directories."""
+        src_dir = test_project_root / "folder_structure" / "subfolder_to_build"
+        manager = BuildManager(test_project_root, src_dir)
+
+        # Create a fake .egg-info directory
+        egg_info_dir = src_dir / "package.egg-info"
+        egg_info_dir.mkdir()
+        (egg_info_dir / "PKG-INFO").write_text("test")
+
+        manager.cleanup()
+
+        # Verify .egg-info directory was removed
+        assert not egg_info_dir.exists()
+
+    def test_cleanup_removes_empty_dirs(self, test_project_root: Path) -> None:
+        """Test that cleanup removes empty directories."""
+        src_dir = test_project_root / "folder_structure" / "subfolder_to_build"
+        manager = BuildManager(test_project_root, src_dir)
+
+        # Create a nested empty directory structure
+        empty_dir = src_dir / "empty_parent" / "empty_child"
+        empty_dir.mkdir(parents=True)
+
+        manager.cleanup()
+
+        # Verify empty directories were removed
+        assert not empty_dir.exists()
+        assert not (src_dir / "empty_parent").exists()
+
     def test_cleanup_handles_missing_files(self, test_project_root: Path) -> None:
         """Test that cleanup handles already-removed files gracefully."""
         src_dir = test_project_root / "folder_structure" / "subfolder_to_build"
