@@ -665,6 +665,18 @@ class BuildManager:
                 version_manager.set_version(version)
 
             # Build the package (prepare_build will handle subfolder config if needed)
+            # Capture package name BEFORE cleanup (which happens in run_build)
+            captured_package_name = None
+            if self._is_subfolder_build():
+                # We need to get the package name before run_build cleans up subfolder_config
+                if not package_name:
+                    # Derive from src_dir name (same logic as in prepare_build)
+                    captured_package_name = (
+                        self.src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
+                    )
+                else:
+                    captured_package_name = package_name
+
             self.run_build(
                 build_command,
                 version=version,
@@ -677,12 +689,14 @@ class BuildManager:
                 # Determine package name and version for filtering
                 publish_package_name = None
                 publish_version = version
-                publish_package_name = None
                 is_subfolder_build = self._is_subfolder_build()
 
                 if is_subfolder_build:
-                    # Get package name from subfolder_config if it was created, otherwise use provided
-                    if self.subfolder_config:
+                    # Use captured package name (subfolder_config was cleaned up in run_build)
+                    if captured_package_name:
+                        publish_package_name = captured_package_name
+                    elif self.subfolder_config:
+                        # Fallback: if somehow subfolder_config still exists
                         publish_package_name = self.subfolder_config.package_name
                     elif package_name:
                         publish_package_name = package_name
