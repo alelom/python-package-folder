@@ -19,6 +19,9 @@ def test_dist_dir(tmp_path: Path) -> Path:
     # Create some distribution files
     (dist_dir / "package-1.0.0-py3-none-any.whl").write_text("fake wheel")
     (dist_dir / "package-1.0.0.tar.gz").write_text("fake source")
+    (dist_dir / "package-1.0.1-py3-none-any.whl").write_text("fake wheel")
+    (dist_dir / "package-1.0.1.tar.gz").write_text("fake source")
+    (dist_dir / "package-1.0.10-py3-none-any.whl").write_text("fake wheel")
     (dist_dir / "other-package-2.0.0-py3-none-any.whl").write_text("fake wheel")
 
     return dist_dir
@@ -125,6 +128,30 @@ class TestPublisher:
             assert all("package-1.0.0" in str(f) for f in file_args)
             assert not any("other-package" in str(f) for f in file_args)
 
+    def test_publish_filters_exact_version(self, test_dist_dir: Path) -> None:
+        """Test that publish filters files by exact version (not partial matches)."""
+        publisher = Publisher(
+            repository=Repository.PYPI,
+            dist_dir=test_dist_dir,
+            package_name="package",
+            version="1.0.1",
+        )
+
+        with patch("python_package_folder.publisher.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+
+            with patch.object(publisher, "_get_credentials", return_value=("user", "pass")):
+                publisher.publish()
+
+            call_args = mock_run.call_args[0][0]
+            file_args = [arg for arg in call_args if str(test_dist_dir) in str(arg)]
+
+            # Should only include 1.0.1 files, not 1.0.0 or 1.0.10
+            assert all("1.0.1" in str(f) for f in file_args)
+            assert not any("1.0.0" in str(f) for f in file_args)
+            assert not any("1.0.10" in str(f) for f in file_args)
+            assert len(file_args) == 2  # wheel and source dist
+
     def test_publish_filters_by_version(self, test_dist_dir: Path) -> None:
         """Test that publish filters files by version."""
         publisher = Publisher(
@@ -143,8 +170,11 @@ class TestPublisher:
             call_args = mock_run.call_args[0][0]
             file_args = [arg for arg in call_args if str(test_dist_dir) in str(arg)]
 
-            # Should only include 1.0.0 files, not 2.0.0
+            # Should only include 1.0.0 files, not 1.0.1, 1.0.10, or 2.0.0
             assert all("1.0.0" in str(f) for f in file_args)
+            assert not any("1.0.1" in str(f) for f in file_args)
+            assert not any("1.0.10" in str(f) for f in file_args)
+            assert not any("2.0.0" in str(f) for f in file_args)
 
     def test_publish_no_filtering(self, test_dist_dir: Path) -> None:
         """Test that publish includes all files when no filter specified."""
@@ -162,8 +192,8 @@ class TestPublisher:
             call_args = mock_run.call_args[0][0]
             file_args = [arg for arg in call_args if str(test_dist_dir) in str(arg)]
 
-            # Should include all distribution files
-            assert len(file_args) == 3
+            # Should include all distribution files (6 files: 4 wheels + 2 source dists)
+            assert len(file_args) == 6
 
     def test_publish_raises_when_no_files(self, tmp_path: Path) -> None:
         """Test that publish raises when no distribution files found."""

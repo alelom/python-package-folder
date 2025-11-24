@@ -677,6 +677,7 @@ class BuildManager:
                 # Determine package name and version for filtering
                 publish_package_name = None
                 publish_version = version
+                publish_package_name = None
                 is_subfolder_build = self._is_subfolder_build()
 
                 if is_subfolder_build:

@@ -201,13 +201,21 @@ class Publisher:
                     # Handle .tar.gz files
                     stem = stem[:-4]  # Remove .tar
 
-                # Check if filename starts with any name variant followed by version
+                # Check if filename matches any name variant with exact version
                 matches = False
                 for name_variant in name_variants:
                     # Pattern: {name}-{version} or {name}-{version}-{tag}
-                    if stem.startswith(f"{name_variant}-{version_str}"):
-                        matches = True
-                        break
+                    # Use exact match: must start with name-version and next char (if any) must be - or end of string
+                    expected_prefix = f"{name_variant}-{version_str}"
+                    if stem.startswith(expected_prefix):
+                        # Ensure exact version match (not a longer version like 1.0.10 matching 1.0.1)
+                        # Check that after the version, we have either:
+                        # - End of string (for source dists: name-version)
+                        # - A hyphen followed by more characters (for wheels: name-version-tag)
+                        remaining = stem[len(expected_prefix) :]
+                        if not remaining or remaining.startswith("-"):
+                            matches = True
+                            break
 
                 if matches:
                     dist_files.append(f)
