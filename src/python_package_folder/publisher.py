@@ -41,12 +41,15 @@ class Publisher:
     This class manages the publishing process, including credential handling
     and repository configuration. It uses twine under the hood for actual publishing.
 
+    Credentials are not stored - they must be provided via command-line arguments
+    or will be prompted each time. This ensures credentials are not persisted.
+
     Attributes:
         repository: Target repository for publishing
         dist_dir: Directory containing built distribution files
         repository_url: Custom repository URL (for Azure or custom PyPI servers)
-        username: Username for authentication (optional, can be prompted)
-        password: Password/token for authentication (optional, can be prompted)
+        username: Username for authentication (optional, will be prompted if not provided)
+        password: Password/token for authentication (optional, will be prompted if not provided)
     """
 
     def __init__(
@@ -109,8 +112,9 @@ class Publisher:
         """
         Get credentials for publishing.
 
-        Prompts for username and password/token if not already provided.
-        Uses keyring if available to store/retrieve credentials securely.
+        Always prompts for username and password/token if not already provided.
+        Does not use keyring to store/retrieve credentials - credentials must be
+        provided via command-line arguments or will be prompted each time.
 
         Returns:
             Tuple of (username, password/token)
@@ -118,24 +122,8 @@ class Publisher:
         username = self.username
         password = self.password
 
-        # Try to get from keyring if available
-        if keyring and not username:
-            try:
-                username = keyring.get_password(
-                    f"python-package-folder-{self.repository.value}", "username"
-                )
-            except Exception:
-                pass
-
-        if keyring and not password:
-            try:
-                password = keyring.get_password(
-                    f"python-package-folder-{self.repository.value}", username or "token"
-                )
-            except Exception:
-                pass
-
-        # Prompt if still not available
+        # Always prompt if not provided via command-line arguments
+        # We don't use keyring to avoid storing credentials
         if not username:
             username = input(f"Enter username for {self.repository.value}: ").strip()
             if not username:
@@ -160,18 +148,7 @@ class Publisher:
                 )
                 username = "__token__"
 
-        # Store in keyring if available
-        if keyring:
-            try:
-                keyring.set_password(
-                    f"python-package-folder-{self.repository.value}", "username", username
-                )
-                keyring.set_password(
-                    f"python-package-folder-{self.repository.value}", username, password
-                )
-            except Exception:
-                # Keyring storage is optional, continue if it fails
-                pass
+        # Do not store in keyring - credentials are not persisted
 
         return username, password
 
@@ -253,6 +230,9 @@ class Publisher:
         cmd = ["twine", "upload"]
         if skip_existing:
             cmd.append("--skip-existing")
+        # Always use verbose for Azure Artifacts to get better error details
+        if self.repository == Repository.AZURE:
+            cmd.append("--verbose")
         cmd.extend(["--repository-url", repo_url])
         cmd.extend(["--username", username])
         cmd.extend(["--password", password])
@@ -283,6 +263,31 @@ class Publisher:
         self.username = None
         self.password = None
         self.publish(skip_existing=skip_existing)
+
+    def clear_stored_credentials(self) -> None:
+        """
+        Clear any stored credentials from keyring for this repository.
+
+        This method can be used to remove previously stored credentials.
+        Note: The current implementation does not store credentials, but this
+        method is provided for compatibility and to clear any old stored credentials.
+        """
+        if keyring:
+            try:
+                service_name = f"python-package-folder-{self.repository.value}"
+                # Try to get and delete stored username
+                stored_username = keyring.get_password(service_name, "username")
+                if stored_username:
+                    try:
+                        keyring.delete_password(service_name, stored_username)
+                    except Exception:
+                        pass
+                    try:
+                        keyring.delete_password(service_name, "username")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
 
 def get_repository_help() -> str:

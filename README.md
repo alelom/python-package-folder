@@ -209,8 +209,8 @@ python-package-folder --project-root /path/to/project --src-dir /path/to/src --b
 1. **Build Verification**: Ensures distribution files exist in the `dist/` directory
 2. **File Filtering**: Automatically filters distribution files to only include those matching the current package name and version (prevents uploading old artifacts)
 3. **Credential Management**: 
-   - Prompts for credentials if not provided
-   - Uses `keyring` for secure storage (if available)
+   - Prompts for credentials if not provided via command-line arguments
+   - Credentials are not stored - you'll be prompted each time (unless provided via `--username` and `--password`)
    - Supports both username/password and API tokens
    - Auto-detects API tokens and uses `__token__` as username
 4. **Repository Configuration**: Configures the target repository (PyPI, TestPyPI, or Azure)
@@ -619,11 +619,22 @@ publisher.publish()
 
 ### Credential Storage
 
-The package uses the `keyring` library (if installed) to securely store credentials. Credentials are stored per repository and will be reused on subsequent runs.
+**Note**: The package does not store credentials by default. Credentials must be provided via command-line arguments (`--username` and `--password`) or will be prompted each time you run the publish command. This ensures credentials are not persisted and must be entered fresh each time.
 
-Install keyring for secure credential storage:
-```bash
-pip install keyring
+If you previously used an older version that stored credentials in keyring, you can clear them using:
+
+```python
+from python_package_folder import Publisher, Repository
+
+publisher = Publisher(repository=Repository.AZURE)
+publisher.clear_stored_credentials()
+```
+
+Or manually using Python:
+```python
+import keyring
+keyring.delete_password("python-package-folder-azure", "username")
+# Also delete the password if you know the username
 ```
 
 ## Command Line Options
