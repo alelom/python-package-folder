@@ -219,7 +219,21 @@ class Publisher:
 
                 if matches:
                     dist_files.append(f)
+
+            # Debug output to help diagnose filtering issues
+            if dist_files:
+                print(f"Filtering: package='{self.package_name}', version='{self.version}'")
+                print(f"Matched {len(dist_files)} files:")
+                for f in dist_files:
+                    print(f"  - {f.name}")
         else:
+            # If no package name or version provided, warn and upload all files
+            if not self.package_name or not self.version:
+                print(
+                    f"Warning: No package name or version specified for filtering. "
+                    f"Uploading all {len(all_dist_files)} files in dist/ directory.",
+                    file=sys.stderr,
+                )
             dist_files = all_dist_files
 
         if not dist_files:

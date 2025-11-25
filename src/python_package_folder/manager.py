@@ -700,6 +700,11 @@ class BuildManager:
                         publish_package_name = self.subfolder_config.package_name
                     elif package_name:
                         publish_package_name = package_name
+                    else:
+                        # Last resort: derive from src_dir name
+                        publish_package_name = (
+                            self.src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
+                        )
                 else:
                     # For regular builds, get package name from pyproject.toml
                     try:
@@ -717,6 +722,18 @@ class BuildManager:
                                 data = tomllib.load(f)
                                 if "project" in data and "name" in data["project"]:
                                     publish_package_name = data["project"]["name"]
+
+                # Ensure we have package name and version for filtering
+                if is_subfolder_build and not publish_package_name:
+                    raise ValueError(
+                        "Could not determine package name for subfolder build. "
+                        "Please specify --package-name explicitly."
+                    )
+                if is_subfolder_build and not publish_version:
+                    raise ValueError(
+                        "Version is required for subfolder builds. "
+                        "Please specify --version explicitly."
+                    )
 
                 publisher = Publisher(
                     repository=repository,
