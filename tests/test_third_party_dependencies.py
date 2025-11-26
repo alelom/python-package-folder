@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -69,9 +69,7 @@ def use_local():
 class TestThirdPartyDependencyExtraction:
     """Tests for extracting third-party dependencies from imports."""
 
-    def test_extract_better_enum_dependency(
-        self, test_project_with_imports: Path
-    ) -> None:
+    def test_extract_better_enum_dependency(self, test_project_with_imports: Path) -> None:
         """Test that better_enum import is detected and normalized to better-enum."""
         project_root = test_project_with_imports
         src_dir = project_root / "subfolder_to_build"
@@ -89,9 +87,7 @@ class TestThirdPartyDependencyExtraction:
             side_effect=lambda name: "better-enum" if name == "better_enum" else None,
         ):
             # Extract third-party dependencies
-            third_party_deps = manager._extract_third_party_dependencies(
-                python_files, analyzer
-            )
+            third_party_deps = manager._extract_third_party_dependencies(python_files, analyzer)
 
             # Should include better-enum (normalized from better_enum)
             # If better_enum is classified as third_party or ambiguous, it should be included
@@ -118,9 +114,7 @@ class TestThirdPartyDependencyExtraction:
             "_get_package_name_from_import",
             side_effect=lambda name: "pymupdf" if name == "fitz" else None,
         ):
-            third_party_deps = manager._extract_third_party_dependencies(
-                python_files, analyzer
-            )
+            third_party_deps = manager._extract_third_party_dependencies(python_files, analyzer)
 
             # Should include pymupdf (mapped from fitz) if fitz is classified as third_party
             # Note: This test depends on fitz being classified as third_party
@@ -129,9 +123,7 @@ class TestThirdPartyDependencyExtraction:
                 # Should not include fitz (the import name)
                 assert "fitz" not in third_party_deps
 
-    def test_extract_dependencies_excludes_stdlib(
-        self, test_project_with_imports: Path
-    ) -> None:
+    def test_extract_dependencies_excludes_stdlib(self, test_project_with_imports: Path) -> None:
         """Test that standard library imports are excluded."""
         project_root = test_project_with_imports
         src_dir = project_root / "subfolder_to_build"
@@ -168,9 +160,7 @@ class TestThirdPartyDependencyExtraction:
         # Should not include local module names
         assert "better_enum_import" not in third_party_deps
 
-    def test_get_package_name_from_import_with_mapping(
-        self, tmp_path: Path
-    ) -> None:
+    def test_get_package_name_from_import_with_mapping(self, tmp_path: Path) -> None:
         """Test _get_package_name_from_import with package name mapping."""
         from python_package_folder.manager import BuildManager
 
@@ -275,9 +265,7 @@ class TestThirdPartyDependenciesInSubfolderBuild:
 
             manager.cleanup()
 
-    def test_package_name_mapping_in_pyproject_toml(
-        self, test_project_with_imports: Path
-    ) -> None:
+    def test_package_name_mapping_in_pyproject_toml(self, test_project_with_imports: Path) -> None:
         """Test that import names are mapped to package names in pyproject.toml."""
         project_root = test_project_with_imports
         src_dir = project_root / "subfolder_to_build"
@@ -299,9 +287,6 @@ class TestThirdPartyDependenciesInSubfolderBuild:
             # Should have pymupdf (the actual package name)
             assert '"pymupdf"' in content or "'pymupdf'" in content
             # Should not have fitz (the import name)
-            assert '"fitz"' not in content or (
-                '"fitz"' in content and '"pymupdf"' in content
-            )
+            assert '"fitz"' not in content or ('"fitz"' in content and '"pymupdf"' in content)
 
             manager.cleanup()
-
