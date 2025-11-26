@@ -590,23 +590,45 @@ class SubfolderBuildConfig:
         updated_content = self._add_dependencies_to_pyproject(content, dependencies)
         self.temp_pyproject.write_text(updated_content, encoding="utf-8")
 
+    def _normalize_package_name(self, package_name: str) -> str:
+        """
+        Normalize package name for PyPI.
+
+        Converts underscores to hyphens, as PyPI package names typically use hyphens
+        while Python import names use underscores (e.g., 'better_enum' -> 'better-enum').
+
+        Args:
+            package_name: Package name from import statement
+
+        Returns:
+            Normalized package name for PyPI
+        """
+        # Convert underscores to hyphens for PyPI package names
+        # This handles the common case where import names use underscores
+        # but PyPI package names use hyphens
+        return package_name.replace("_", "-")
+
     def _add_dependencies_to_pyproject(self, content: str, dependencies: list[str]) -> str:
         """
         Add dependencies to pyproject.toml content.
 
         Adds the specified dependencies to the [project] section's dependencies list.
         If dependencies already exist, merges them. If no dependencies section exists,
-        creates one.
+        creates one. Package names are normalized (underscores -> hyphens) to match
+        PyPI naming conventions.
 
         Args:
             content: Current pyproject.toml content
-            dependencies: List of dependency names to add
+            dependencies: List of dependency names to add (will be normalized)
 
         Returns:
             Updated pyproject.toml content with dependencies added
         """
         if not dependencies:
             return content
+
+        # Normalize package names (convert underscores to hyphens for PyPI)
+        normalized_deps = [self._normalize_package_name(dep) for dep in dependencies]
 
         lines = content.split("\n")
         result = []
@@ -631,8 +653,8 @@ class SubfolderBuildConfig:
                 if line.strip().endswith("]"):
                     in_dependencies = False
 
-        # Merge with new dependencies
-        all_deps = sorted(existing_deps | set(dependencies))
+        # Merge with new dependencies (normalized)
+        all_deps = sorted(existing_deps | set(normalized_deps))
 
         # Second pass: build result with dependencies
         in_project = False
