@@ -34,8 +34,46 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
+      - name: Verify pyproject.toml is correct
+        run: |
+          # Verify pyproject.toml has the correct package name
+          if ! grep -q 'name = "python-package-folder"' pyproject.toml; then
+            echo "Error: pyproject.toml does not have correct package name 'python-package-folder'"
+            echo "Current content:"
+            grep '^name =' pyproject.toml || echo "No name field found"
+            exit 1
+          fi
+          # Verify packages points to the correct location
+          if ! grep -q 'packages = \["src/python_package_folder"\]' pyproject.toml; then
+            echo "Error: pyproject.toml does not have correct packages configuration"
+            echo "Current packages:"
+            grep -A 1 '\[tool.hatch.build.targets.wheel\]' pyproject.toml || echo "No packages found"
+            exit 1
+          fi
+          echo "✓ pyproject.toml is correct"
+
+      - name: Clean dist directory
+        run: |
+          # Remove any existing distribution files to prevent publishing test artifacts
+          rm -rf dist/
+          echo "✓ Cleaned dist/ directory"
+
       - name: Build package
         run: uv build
+
+      - name: Verify distribution files
+        run: |
+          # List all distribution files that will be published
+          echo "Distribution files to be published:"
+          ls -la dist/ || echo "No dist/ directory found"
+          # Verify only python-package-folder files are present
+          if ls dist/*.whl dist/*.tar.gz 2>/dev/null | grep -v "python-package-folder"; then
+            echo "Error: Found distribution files for packages other than python-package-folder"
+            echo "Files in dist/:"
+            ls -la dist/
+            exit 1
+          fi
+          echo "✓ Only python-package-folder distribution files found"
 
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always
