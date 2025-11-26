@@ -268,6 +268,19 @@ class BuildManager:
         for dep in external_deps:
             self._copy_dependency(dep)
 
+        # For subfolder builds, extract third-party dependencies and add to pyproject.toml
+        if self._is_subfolder_build() and self.subfolder_config:
+            # Re-analyze all Python files (including copied dependencies) to find third-party imports
+            all_python_files = analyzer.find_all_python_files(self.src_dir)
+            third_party_deps = self._extract_third_party_dependencies(all_python_files, analyzer)
+            if third_party_deps:
+                print(
+                    f"Found {len(third_party_deps)} third-party dependencies: {', '.join(third_party_deps)}"
+                )
+                self.subfolder_config.add_third_party_dependencies(third_party_deps)
+            else:
+                print("No third-party dependencies found in subfolder code")
+
         # Report ambiguous imports
         self._report_ambiguous_imports(python_files)
 
@@ -380,6 +393,51 @@ class BuildManager:
                 shutil.copy2(src_item, dst_item)
             elif src_item.is_dir():
                 self._copytree_excluding(src_item, dst_item)
+
+    def _extract_third_party_dependencies(
+        self, python_files: list[Path], analyzer: ImportAnalyzer
+    ) -> list[str]:
+        """
+        Extract third-party package dependencies from Python files.
+
+        Analyzes all Python files to find imports classified as "third_party"
+        and returns a list of unique package names.
+
+        Args:
+            python_files: List of Python file paths to analyze
+            analyzer: ImportAnalyzer instance to use for classification
+
+        Returns:
+            List of unique third-party package names (e.g., ["pypdf", "requests"])
+        """
+        third_party_packages: set[str] = set()
+
+        for file_path in python_files:
+            imports = analyzer.extract_imports(file_path)
+            for imp in imports:
+                analyzer.classify_import(imp, self.src_dir)
+
+                # Extract the root package name (first part of module name)
+                root_module = imp.module_name.split(".")[0]
+
+                # Skip if it's a standard library module
+                stdlib_modules = analyzer.get_stdlib_modules()
+                if root_module in stdlib_modules:
+                    continue
+
+                # If classified as third_party, add it
+                if imp.classification == "third_party":
+                    third_party_packages.add(root_module)
+                # If it's ambiguous or unresolved, and not stdlib/local/external,
+                # it's likely a third-party package that needs to be declared
+                elif imp.classification == "ambiguous" or imp.classification is None:
+                    # Check if it's not a local or external module
+                    if not imp.resolved_path:
+                        # This is likely a third-party package that's not installed
+                        # in the build environment but needs to be declared
+                        third_party_packages.add(root_module)
+
+        return sorted(list(third_party_packages))
 
     def _report_ambiguous_imports(self, python_files: list[Path]) -> None:
         """

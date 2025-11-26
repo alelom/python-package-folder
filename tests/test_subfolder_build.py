@@ -524,6 +524,39 @@ version = "3.0.0"
         parent_pyproject.write_text(original_content)
         config.restore()
 
+    def test_third_party_dependencies_added(self, test_project_with_pyproject: Path) -> None:
+        """Test that third-party dependencies are added to temporary pyproject.toml."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Create a Python file that imports a third-party package
+        (subfolder / "module.py").write_text("import pypdf\nimport requests\n")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+            package_name="test-package",
+        )
+
+        config.create_temp_pyproject()
+
+        # Add third-party dependencies
+        config.add_third_party_dependencies(["pypdf", "requests"])
+
+        # Verify dependencies were added
+        pyproject_path = project_root / "pyproject.toml"
+        assert pyproject_path.exists()
+        content = pyproject_path.read_text()
+
+        # Check that dependencies section exists and contains the packages
+        assert "dependencies = [" in content
+        assert '"pypdf"' in content or "'pypdf'" in content
+        assert '"requests"' in content or "'requests'" in content
+
+        # Cleanup
+        config.restore()
+
 
 class TestSubfolderBuildWithoutParentPyproject:
     """Tests for subfolder builds when parent pyproject.toml doesn't exist."""
@@ -638,6 +671,39 @@ class TestSubfolderBuildTemporaryPyprojectCreation:
 
         # Verify backup was created
         assert (project_root / "pyproject.toml.original").exists()
+
+        # Cleanup
+        config.restore()
+
+    def test_third_party_dependencies_added(self, test_project_with_pyproject: Path) -> None:
+        """Test that third-party dependencies are added to temporary pyproject.toml."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Create a Python file that imports a third-party package
+        (subfolder / "module.py").write_text("import pypdf\nimport requests\n")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+            package_name="test-package",
+        )
+
+        config.create_temp_pyproject()
+
+        # Add third-party dependencies
+        config.add_third_party_dependencies(["pypdf", "requests"])
+
+        # Verify dependencies were added
+        pyproject_path = project_root / "pyproject.toml"
+        assert pyproject_path.exists()
+        content = pyproject_path.read_text()
+
+        # Check that dependencies section exists and contains the packages
+        assert "dependencies = [" in content
+        assert '"pypdf"' in content or "'pypdf'" in content
+        assert '"requests"' in content or "'requests'" in content
 
         # Cleanup
         config.restore()

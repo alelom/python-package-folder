@@ -392,6 +392,9 @@ class TestRealFolderStructure:
         if not src_dir.exists():
             pytest.skip("Real test structure not found")
 
+        # Check what files exist before the build
+        some_globals_existed_before = (src_dir / "some_globals.py").exists()
+
         manager = BuildManager(project_root, src_dir)
 
         # Prepare build
@@ -418,8 +421,9 @@ class TestRealFolderStructure:
             # Always cleanup
             manager.cleanup()
 
-            # Verify cleanup
-            assert not (src_dir / "some_globals.py").exists()
+            # Verify cleanup - only check if the file didn't exist before
+            if not some_globals_existed_before:
+                assert not (src_dir / "some_globals.py").exists()
             if (src_dir / "utility_folder").exists():
                 # May have been there originally, so just check it's not in copied_dirs
                 assert (src_dir / "utility_folder") not in manager.copied_dirs

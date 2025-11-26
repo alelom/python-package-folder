@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 # ---- Project Info and Dependencies ----
 
 [project.urls]
@@ -6,7 +10,7 @@ Repository = "https://github.com/alelom/python-package-folder"
 # Documentation = "https://github.com/alelom/python-package-folder"
 
 [project]
-name = "python-package-folder"
+name = "subfolder-to-build"
 description = "Python package to automatically package and build a folder, fetching all relevant dependencies."
 authors = [
     { name="Alessio Lombardi", email="work@alelom.com" },
@@ -14,7 +18,6 @@ authors = [
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11,<4.0"
-dynamic = ["version"]
 
 # https://pypi.org/classifiers/
 # Adjust as needed:
@@ -43,6 +46,7 @@ dependencies = [
 
 # ---- Dev dependencies ----
 
+version = "0.0.0"
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",
@@ -67,24 +71,15 @@ python-package-folder = "python_package_folder.python_package_folder:main"
 # Dynamic versioning from:
 # https://github.com/ninoseki/uv-dynamic-versioning/
 
-[build-system]
-requires = ["hatchling", "uv-dynamic-versioning"]
-build-backend = "hatchling.build"
-
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
 # Note JSON schemas don't seem to be right for tool.hatch.version.source so
 # this may cause false warnings in IDEs.
 # https://github.com/ninoseki/uv-dynamic-versioning/issues/21
 
-[tool.uv-dynamic-versioning]
-vcs = "git"
-style = "pep440"
-bump = true
-
 [tool.hatch.build.targets.wheel]
 # The source location for the package.
-packages = ["src/python_package_folder"]
+packages = ["tests/folder_structure/subfolder_to_build"]
 
 
 # ---- Settings ----

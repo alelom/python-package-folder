@@ -254,6 +254,9 @@ class SubfolderBuildConfig:
             # If original pyproject.toml exists, temporarily move it
             if original_pyproject.exists():
                 backup_path = self.project_root / "pyproject.toml.original"
+                # Remove backup if it already exists (from previous failed test or run)
+                if backup_path.exists():
+                    backup_path.unlink()
                 original_pyproject.rename(backup_path)
                 self.original_pyproject_backup = backup_path
 
@@ -292,6 +295,9 @@ class SubfolderBuildConfig:
 
         # Temporarily move original to backup location
         backup_path = self.project_root / "pyproject.toml.original"
+        # Remove backup if it already exists (from previous failed test or run)
+        if backup_path.exists():
+            backup_path.unlink()
         original_pyproject.rename(backup_path)
         self.original_pyproject_backup = backup_path
 
@@ -556,6 +562,117 @@ class SubfolderBuildConfig:
                         dep_lines.append(f'    "{dep}",')
                     dep_lines.append("]")
                 result[insert_index:insert_index] = dep_lines
+
+        return "\n".join(result)
+
+    def add_third_party_dependencies(self, dependencies: list[str]) -> None:
+        """
+        Add third-party dependencies to the temporary pyproject.toml.
+
+        This method updates the pyproject.toml file that was created for the subfolder
+        build by adding the specified dependencies to the [project.dependencies] section.
+
+        Args:
+            dependencies: List of third-party package names to add (e.g., ["pypdf", "requests"])
+        """
+        if not self.temp_pyproject or not self.temp_pyproject.exists():
+            print(
+                f"Warning: Cannot add third-party dependencies - pyproject.toml not found at {self.temp_pyproject}",
+                file=sys.stderr,
+            )
+            return
+
+        if not dependencies:
+            return
+
+        print(f"Adding third-party dependencies to pyproject.toml: {', '.join(dependencies)}")
+        content = self.temp_pyproject.read_text(encoding="utf-8")
+        updated_content = self._add_dependencies_to_pyproject(content, dependencies)
+        self.temp_pyproject.write_text(updated_content, encoding="utf-8")
+
+    def _add_dependencies_to_pyproject(self, content: str, dependencies: list[str]) -> str:
+        """
+        Add dependencies to pyproject.toml content.
+
+        Adds the specified dependencies to the [project] section's dependencies list.
+        If dependencies already exist, merges them. If no dependencies section exists,
+        creates one.
+
+        Args:
+            content: Current pyproject.toml content
+            dependencies: List of dependency names to add
+
+        Returns:
+            Updated pyproject.toml content with dependencies added
+        """
+        if not dependencies:
+            return content
+
+        lines = content.split("\n")
+        result = []
+        in_project = False
+        in_dependencies = False
+        dependencies_added = False
+        existing_deps: set[str] = set()
+
+        # First pass: find existing dependencies
+        for line in lines:
+            if line.strip().startswith("[project]"):
+                in_project = True
+            elif line.strip().startswith("[") and in_project:
+                in_project = False
+            elif in_project and re.match(r"^\s*dependencies\s*=\s*\[", line):
+                in_dependencies = True
+            elif in_dependencies:
+                # Extract existing dependency names
+                dep_match = re.search(r'["\']([^"\']+)["\']', line)
+                if dep_match:
+                    existing_deps.add(dep_match.group(1))
+                if line.strip().endswith("]"):
+                    in_dependencies = False
+
+        # Merge with new dependencies
+        all_deps = sorted(existing_deps | set(dependencies))
+
+        # Second pass: build result with dependencies
+        in_project = False
+        in_dependencies = False
+        for line in lines:
+            if line.strip().startswith("[project]"):
+                in_project = True
+                result.append(line)
+            elif line.strip().startswith("[") and in_project:
+                # End of [project] section, add dependencies if not already present
+                if not dependencies_added:
+                    result.append("dependencies = [")
+                    for dep in all_deps:
+                        result.append(f'    "{dep}",')
+                    result.append("]")
+                    result.append("")
+                in_project = False
+                result.append(line)
+            elif in_project and re.match(r"^\s*dependencies\s*=\s*\[", line):
+                # Replace existing dependencies section
+                result.append("dependencies = [")
+                for dep in all_deps:
+                    result.append(f'    "{dep}",')
+                result.append("]")
+                dependencies_added = True
+                in_dependencies = True
+            elif in_dependencies:
+                # Skip lines in existing dependencies section (already replaced)
+                if line.strip().endswith("]"):
+                    in_dependencies = False
+            else:
+                result.append(line)
+
+        # If [project] section exists but no dependencies were added, add them
+        if in_project and not dependencies_added:
+            result.append("dependencies = [")
+            for dep in all_deps:
+                result.append(f'    "{dep}",')
+            result.append("]")
+            result.append("")
 
         return "\n".join(result)
 
