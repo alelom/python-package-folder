@@ -394,6 +394,88 @@ class BuildManager:
             elif src_item.is_dir():
                 self._copytree_excluding(src_item, dst_item)
 
+    def _get_package_name_from_import(self, module_name: str) -> str | None:
+        """
+        Get the actual PyPI package name from an import module name.
+
+        This handles cases where the import name differs from the package name
+        (e.g., 'import fitz' from 'pymupdf' package).
+
+        Args:
+            module_name: The module name from the import statement
+
+        Returns:
+            The actual package name, or None if not found
+        """
+        root_module = module_name.split(".")[0]
+        try:
+            # Try Python 3.10+ first (has packages_distributions)
+            import importlib.metadata as importlib_metadata
+
+            # Use packages_distributions() if available (Python 3.10+)
+            if hasattr(importlib_metadata, "packages_distributions"):
+                packages_map = importlib_metadata.packages_distributions()
+                # packages_map is a dict mapping module names to list of distribution names
+                if root_module in packages_map:
+                    # Return the first distribution name (usually there's only one)
+                    dist_names = packages_map[root_module]
+                    if dist_names:
+                        return dist_names[0]
+
+            # Fallback: search all distributions
+            for dist in importlib_metadata.distributions():
+                try:
+                    # Check if this distribution provides the module
+                    # by looking at its files
+                    files = dist.files or []
+                    for file in files:
+                        file_str = str(file)
+                        # Check if file is the module itself or in a package directory
+                        if (
+                            file.suffix == ".py"
+                            and (file.stem == root_module or file.stem == "__init__")
+                        ) or (
+                            "/" in file_str
+                            and (
+                                file_str.startswith(f"{root_module}/")
+                                or file_str.startswith(f"{root_module.replace('_', '-')}/")
+                            )
+                        ):
+                            return dist.metadata["Name"]
+                except Exception:
+                    continue
+
+        except ImportError:
+            try:
+                # Fallback for older Python versions
+                import importlib_metadata
+
+                # Search all distributions
+                for dist in importlib_metadata.distributions():
+                    try:
+                        files = dist.files or []
+                        for file in files:
+                            file_str = str(file)
+                            if (
+                                file.suffix == ".py"
+                                and (file.stem == root_module or file.stem == "__init__")
+                            ) or (
+                                "/" in file_str
+                                and (
+                                    file_str.startswith(f"{root_module}/")
+                                    or file_str.startswith(f"{root_module.replace('_', '-')}/")
+                                )
+                            ):
+                                return dist.metadata["Name"]
+                    except Exception:
+                        continue
+            except ImportError:
+                pass
+        except Exception:
+            pass
+
+        return None
+
     def _extract_third_party_dependencies(
         self, python_files: list[Path], analyzer: ImportAnalyzer
     ) -> list[str]:
@@ -401,14 +483,15 @@ class BuildManager:
         Extract third-party package dependencies from Python files.
 
         Analyzes all Python files to find imports classified as "third_party"
-        and returns a list of unique package names.
+        and returns a list of unique package names. Handles cases where the
+        import name differs from the package name (e.g., 'fitz' -> 'pymupdf').
 
         Args:
             python_files: List of Python file paths to analyze
             analyzer: ImportAnalyzer instance to use for classification
 
         Returns:
-            List of unique third-party package names (e.g., ["pypdf", "requests"])
+            List of unique third-party package names (e.g., ["pypdf", "requests", "pymupdf"])
         """
         third_party_packages: set[str] = set()
 
@@ -425,17 +508,28 @@ class BuildManager:
                 if root_module in stdlib_modules:
                     continue
 
-                # If classified as third_party, add it
+                # If classified as third_party, try to get actual package name
                 if imp.classification == "third_party":
-                    third_party_packages.add(root_module)
+                    # Try to get the actual package name from metadata
+                    actual_package = self._get_package_name_from_import(imp.module_name)
+                    if actual_package:
+                        third_party_packages.add(actual_package)
+                    else:
+                        # Fallback to using the import name
+                        third_party_packages.add(root_module)
                 # If it's ambiguous or unresolved, and not stdlib/local/external,
                 # it's likely a third-party package that needs to be declared
                 elif imp.classification == "ambiguous" or imp.classification is None:
                     # Check if it's not a local or external module
                     if not imp.resolved_path:
-                        # This is likely a third-party package that's not installed
-                        # in the build environment but needs to be declared
-                        third_party_packages.add(root_module)
+                        # Try to get the actual package name from metadata
+                        # (might work if package is installed but module path is unusual)
+                        actual_package = self._get_package_name_from_import(imp.module_name)
+                        if actual_package:
+                            third_party_packages.add(actual_package)
+                        else:
+                            # Fallback: use import name (will be normalized later)
+                            third_party_packages.add(root_module)
 
         return sorted(list(third_party_packages))
 
