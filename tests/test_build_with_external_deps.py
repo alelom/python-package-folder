@@ -369,6 +369,7 @@ class TestRealFolderStructure:
         if not src_dir.exists():
             pytest.skip("Real test structure not found")
 
+        # This test only reads files, doesn't modify them, so no backup needed
         finder = ExternalDependencyFinder(project_root, src_dir)
         analyzer = ImportAnalyzer(project_root)
 
@@ -392,15 +393,28 @@ class TestRealFolderStructure:
         if not src_dir.exists():
             pytest.skip("Real test structure not found")
 
+        # Save original repository files that might be modified
+        original_pyproject = project_root / "pyproject.toml"
+        original_readme = project_root / "README.md"
+        pyproject_backup = None
+        readme_backup = None
+        pyproject_existed = original_pyproject.exists()
+        readme_existed = original_readme.exists()
+
+        if pyproject_existed:
+            pyproject_backup = original_pyproject.read_bytes()
+        if readme_existed:
+            readme_backup = original_readme.read_bytes()
+
         # Check what files exist before the build
         some_globals_existed_before = (src_dir / "some_globals.py").exists()
 
         manager = BuildManager(project_root, src_dir)
 
-        # Prepare build
-        external_deps = manager.prepare_build()
-
         try:
+            # Prepare build
+            external_deps = manager.prepare_build()
+
             # Verify dependencies were found
             assert len(external_deps) >= 1
 
@@ -420,6 +434,33 @@ class TestRealFolderStructure:
         finally:
             # Always cleanup
             manager.cleanup()
+
+            # Restore original repository files if they were modified
+            if pyproject_backup and original_pyproject.exists():
+                # Verify the file was restored correctly, or restore it manually
+                try:
+                    current_content = original_pyproject.read_bytes()
+                    if current_content != pyproject_backup:
+                        # File was modified, restore it
+                        original_pyproject.write_bytes(pyproject_backup)
+                except Exception as e:
+                    print(f"Warning: Could not verify/restore pyproject.toml: {e}", file=sys.stderr)
+            elif pyproject_backup and not original_pyproject.exists():
+                # File was deleted, restore it
+                original_pyproject.write_bytes(pyproject_backup)
+
+            if readme_backup and original_readme.exists():
+                # Verify the file was restored correctly, or restore it manually
+                try:
+                    current_content = original_readme.read_bytes()
+                    if current_content != readme_backup:
+                        # File was modified, restore it
+                        original_readme.write_bytes(readme_backup)
+                except Exception as e:
+                    print(f"Warning: Could not verify/restore README.md: {e}", file=sys.stderr)
+            elif readme_backup and not original_readme.exists():
+                # File was deleted, restore it
+                original_readme.write_bytes(readme_backup)
 
             # Verify cleanup - only check if the file didn't exist before
             if not some_globals_existed_before:
@@ -458,6 +499,19 @@ class TestExclusionPatterns:
         if not src_dir.exists():
             pytest.skip("Real test structure not found")
 
+        # Save original repository files that might be modified
+        original_pyproject = project_root / "pyproject.toml"
+        original_readme = project_root / "README.md"
+        pyproject_backup = None
+        readme_backup = None
+        pyproject_existed = original_pyproject.exists()
+        readme_existed = original_readme.exists()
+
+        if pyproject_existed:
+            pyproject_backup = original_pyproject.read_bytes()
+        if readme_existed:
+            readme_backup = original_readme.read_bytes()
+
         manager = BuildManager(project_root, src_dir)
 
         try:
@@ -477,6 +531,27 @@ class TestExclusionPatterns:
                 assert not copied_superseded.exists(), "Files in _SS should be excluded"
         finally:
             manager.cleanup()
+
+            # Restore original repository files if they were modified
+            if pyproject_backup and original_pyproject.exists():
+                try:
+                    current_content = original_pyproject.read_bytes()
+                    if current_content != pyproject_backup:
+                        original_pyproject.write_bytes(pyproject_backup)
+                except Exception as e:
+                    print(f"Warning: Could not verify/restore pyproject.toml: {e}", file=sys.stderr)
+            elif pyproject_backup and not original_pyproject.exists():
+                original_pyproject.write_bytes(pyproject_backup)
+
+            if readme_backup and original_readme.exists():
+                try:
+                    current_content = original_readme.read_bytes()
+                    if current_content != readme_backup:
+                        original_readme.write_bytes(readme_backup)
+                except Exception as e:
+                    print(f"Warning: Could not verify/restore README.md: {e}", file=sys.stderr)
+            elif readme_backup and not original_readme.exists():
+                original_readme.write_bytes(readme_backup)
 
     def test_exclude_custom_patterns(self, test_project_root: Path) -> None:
         """Test that custom exclusion patterns work."""
