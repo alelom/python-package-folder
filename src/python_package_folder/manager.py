@@ -421,9 +421,7 @@ class BuildManager:
             if hasattr(importlib_metadata, "packages_distributions"):
                 if self._packages_distributions_cache is None:
                     # Cache the packages_distributions() result
-                    self._packages_distributions_cache = (
-                        importlib_metadata.packages_distributions()
-                    )
+                    self._packages_distributions_cache = importlib_metadata.packages_distributions()
                 packages_map = self._packages_distributions_cache
                 # packages_map is a dict mapping module names to list of distribution names
                 if root_module in packages_map:
@@ -445,9 +443,10 @@ class BuildManager:
                     # Check distribution name first (fast check)
                     dist_name = dist.metadata.get("Name", "")
                     # If distribution name matches or contains the module name, check files
-                    if (
-                        dist_name.lower().replace("-", "_") == root_module.lower()
-                        or root_module.lower() in dist_name.lower().replace("-", "_")
+                    if dist_name.lower().replace(
+                        "-", "_"
+                    ) == root_module.lower() or root_module.lower() in dist_name.lower().replace(
+                        "-", "_"
                     ):
                         # Check if this distribution provides the module by looking at its files
                         files = dist.files or []
@@ -466,9 +465,7 @@ class BuildManager:
                                 "/" in file_str
                                 and (
                                     file_str.startswith(f"{root_module}/")
-                                    or file_str.startswith(
-                                        f"{root_module.replace('_', '-')}/"
-                                    )
+                                    or file_str.startswith(f"{root_module.replace('_', '-')}/")
                                 )
                             ):
                                 return dist.metadata["Name"]
