@@ -86,6 +86,8 @@ class BuildManager:
             self.project_root, self.src_dir, exclude_patterns=exclude_patterns
         )
         self.subfolder_config: SubfolderBuildConfig | None = None
+        # Cache for package name lookups (expensive operation)
+        self._packages_distributions_cache: dict[str, list[str]] | None = None
 
         # Check if it's a valid Python package directory
         if not any(self.src_dir.glob("*.py")) and not (self.src_dir / "__init__.py").exists():
@@ -271,7 +273,9 @@ class BuildManager:
         # For subfolder builds, extract third-party dependencies and add to pyproject.toml
         if self._is_subfolder_build() and self.subfolder_config:
             # Re-analyze all Python files (including copied dependencies) to find third-party imports
+            print("Analyzing Python files for third-party dependencies...")
             all_python_files = analyzer.find_all_python_files(self.src_dir)
+            print(f"Found {len(all_python_files)} Python files to analyze")
             third_party_deps = self._extract_third_party_dependencies(all_python_files, analyzer)
             if third_party_deps:
                 print(
@@ -413,8 +417,14 @@ class BuildManager:
             import importlib.metadata as importlib_metadata
 
             # Use packages_distributions() if available (Python 3.10+)
+            # Cache the result since it's expensive to call
             if hasattr(importlib_metadata, "packages_distributions"):
-                packages_map = importlib_metadata.packages_distributions()
+                if self._packages_distributions_cache is None:
+                    # Cache the packages_distributions() result
+                    self._packages_distributions_cache = (
+                        importlib_metadata.packages_distributions()
+                    )
+                packages_map = self._packages_distributions_cache
                 # packages_map is a dict mapping module names to list of distribution names
                 if root_module in packages_map:
                     # Return the first distribution name (usually there's only one)
@@ -422,26 +432,46 @@ class BuildManager:
                     if dist_names:
                         return dist_names[0]
 
-            # Fallback: search all distributions
+            # Fallback: search all distributions (this can be slow, so limit search)
+            # Only check top-level package matches to speed up search
+            dist_count = 0
+            max_distributions_to_check = 1000  # Limit to prevent excessive searching
             for dist in importlib_metadata.distributions():
+                dist_count += 1
+                if dist_count > max_distributions_to_check:
+                    # Too many distributions, give up to avoid hanging
+                    break
                 try:
-                    # Check if this distribution provides the module
-                    # by looking at its files
-                    files = dist.files or []
-                    for file in files:
-                        file_str = str(file)
-                        # Check if file is the module itself or in a package directory
-                        if (
-                            file.suffix == ".py"
-                            and (file.stem == root_module or file.stem == "__init__")
-                        ) or (
-                            "/" in file_str
-                            and (
-                                file_str.startswith(f"{root_module}/")
-                                or file_str.startswith(f"{root_module.replace('_', '-')}/")
-                            )
-                        ):
-                            return dist.metadata["Name"]
+                    # Check distribution name first (fast check)
+                    dist_name = dist.metadata.get("Name", "")
+                    # If distribution name matches or contains the module name, check files
+                    if (
+                        dist_name.lower().replace("-", "_") == root_module.lower()
+                        or root_module.lower() in dist_name.lower().replace("-", "_")
+                    ):
+                        # Check if this distribution provides the module by looking at its files
+                        files = dist.files or []
+                        # Limit file checking to first 100 files per distribution
+                        file_count = 0
+                        for file in files:
+                            file_count += 1
+                            if file_count > 100:
+                                break
+                            file_str = str(file)
+                            # Check if file is the module itself or in a package directory
+                            if (
+                                file.suffix == ".py"
+                                and (file.stem == root_module or file.stem == "__init__")
+                            ) or (
+                                "/" in file_str
+                                and (
+                                    file_str.startswith(f"{root_module}/")
+                                    or file_str.startswith(
+                                        f"{root_module.replace('_', '-')}/"
+                                    )
+                                )
+                            ):
+                                return dist.metadata["Name"]
                 except Exception:
                     continue
 
@@ -494,8 +524,14 @@ class BuildManager:
             List of unique third-party package names (e.g., ["pypdf", "requests", "pymupdf"])
         """
         third_party_packages: set[str] = set()
+        # Cache package name lookups to avoid repeated expensive searches
+        package_name_cache: dict[str, str | None] = {}
 
-        for file_path in python_files:
+        total_files = len(python_files)
+        for idx, file_path in enumerate(python_files):
+            if idx > 0 and idx % 50 == 0:
+                print(f"  Analyzing file {idx}/{total_files}...", end="\r", flush=True)
+
             imports = analyzer.extract_imports(file_path)
             for imp in imports:
                 analyzer.classify_import(imp, self.src_dir)
@@ -510,8 +546,12 @@ class BuildManager:
 
                 # If classified as third_party, try to get actual package name
                 if imp.classification == "third_party":
-                    # Try to get the actual package name from metadata
-                    actual_package = self._get_package_name_from_import(imp.module_name)
+                    # Check cache first
+                    if root_module not in package_name_cache:
+                        package_name_cache[root_module] = self._get_package_name_from_import(
+                            imp.module_name
+                        )
+                    actual_package = package_name_cache[root_module]
                     if actual_package:
                         third_party_packages.add(actual_package)
                     else:
@@ -522,14 +562,20 @@ class BuildManager:
                 elif imp.classification == "ambiguous" or imp.classification is None:
                     # Check if it's not a local or external module
                     if not imp.resolved_path:
-                        # Try to get the actual package name from metadata
-                        # (might work if package is installed but module path is unusual)
-                        actual_package = self._get_package_name_from_import(imp.module_name)
+                        # Check cache first
+                        if root_module not in package_name_cache:
+                            package_name_cache[root_module] = self._get_package_name_from_import(
+                                imp.module_name
+                            )
+                        actual_package = package_name_cache[root_module]
                         if actual_package:
                             third_party_packages.add(actual_package)
                         else:
                             # Fallback: use import name (will be normalized later)
                             third_party_packages.add(root_module)
+
+        if total_files > 50:
+            print()  # New line after progress indicator
 
         return sorted(list(third_party_packages))
 
