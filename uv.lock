@@ -590,6 +590,40 @@ wheels = [
 ]
 
 [[package]]
+name = "python-package-folder"
+source = { editable = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "basedpyright" },
+    { name = "codespell" },
+    { name = "funlog" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-sugar" },
+    { name = "rich" },
+    { name = "ruff" },
+    { name = "sysappend" },
+    { name = "twine" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "basedpyright", specifier = ">=1.29.1" },
+    { name = "codespell", specifier = ">=2.4.1" },
+    { name = "funlog", specifier = ">=0.2.1" },
+    { name = "pytest", specifier = ">=8.3.5" },
+    { name = "pytest-cov", specifier = ">=4.0.0" },
+    { name = "pytest-sugar", specifier = ">=1.0.0" },
+    { name = "rich", specifier = ">=14.0.0" },
+    { name = "ruff", specifier = ">=0.11.9" },
+    { name = "sysappend", specifier = ">=2.0.0" },
+    { name = "twine", specifier = ">=6.2.0" },
+]
+
+[[package]]
 name = "pywin32-ctypes"
 version = "0.2.3"
 source = { registry = "https://pypi.org/simple" }
@@ -698,41 +732,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/32/8a/ed6747b1cc723c81f526d4c12c1b1d43d07190e1e8258dbf934392fc850e/secretstorage-3.4.1.tar.gz", hash = "sha256:a799acf5be9fb93db609ebaa4ab6e8f1f3ed5ae640e0fa732bfea59e9c3b50e8", size = 19871, upload-time = "2025-11-11T11:30:23.798Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b0/6d/24ebb101484f1911a6be6695b76ce43219caa110ebbe07d8c3a5f3106cca/secretstorage-3.4.1-py3-none-any.whl", hash = "sha256:c55d57b4da3de568d8c3af89dad244ab24c35ca1da8625fc1b550edf005ebc41", size = 15301, upload-time = "2025-11-11T11:30:22.618Z" },
-]
-
-[[package]]
-name = "subfolder-to-build"
-version = "0.0.0"
-source = { editable = "." }
-
-[package.dev-dependencies]
-dev = [
-    { name = "basedpyright" },
-    { name = "codespell" },
-    { name = "funlog" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-sugar" },
-    { name = "rich" },
-    { name = "ruff" },
-    { name = "sysappend" },
-    { name = "twine" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "basedpyright", specifier = ">=1.29.1" },
-    { name = "codespell", specifier = ">=2.4.1" },
-    { name = "funlog", specifier = ">=0.2.1" },
-    { name = "pytest", specifier = ">=8.3.5" },
-    { name = "pytest-cov", specifier = ">=4.0.0" },
-    { name = "pytest-sugar", specifier = ">=1.0.0" },
-    { name = "rich", specifier = ">=14.0.0" },
-    { name = "ruff", specifier = ">=0.11.9" },
-    { name = "sysappend", specifier = ">=2.0.0" },
-    { name = "twine", specifier = ">=6.2.0" },
 ]
 
 [[package]]
