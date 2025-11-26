@@ -65,15 +65,37 @@ jobs:
         run: |
           # List all distribution files that will be published
           echo "Distribution files to be published:"
-          ls -la dist/ || echo "No dist/ directory found"
-          # Verify only python-package-folder files are present
-          if ls dist/*.whl dist/*.tar.gz 2>/dev/null | grep -v "python-package-folder"; then
-            echo "Error: Found distribution files for packages other than python-package-folder"
+          ls -la dist/ || (echo "No dist/ directory found" && exit 1)
+          
+          # Check for unexpected files (exclude .gitignore and expected package files)
+          UNEXPECTED_FILES=0
+          for file in dist/*.whl dist/*.tar.gz; do
+            if [ -f "$file" ]; then
+              filename=$(basename "$file")
+              # Check if file starts with python_package_folder (package directory name)
+              if [[ ! "$filename" =~ ^python_package_folder- ]]; then
+                echo "Error: Found unexpected distribution file: $filename"
+                UNEXPECTED_FILES=$((UNEXPECTED_FILES + 1))
+              fi
+            fi
+          done
+          
+          if [ $UNEXPECTED_FILES -gt 0 ]; then
+            echo "Error: Found $UNEXPECTED_FILES unexpected distribution file(s)"
             echo "Files in dist/:"
             ls -la dist/
             exit 1
           fi
-          echo "✓ Only python-package-folder distribution files found"
+          
+          # Verify at least one expected file exists
+          if ! ls dist/python_package_folder-*.whl dist/python_package_folder-*.tar.gz 2>/dev/null | grep -q .; then
+            echo "Error: No python_package_folder distribution files found"
+            echo "Files in dist/:"
+            ls -la dist/
+            exit 1
+          fi
+          
+          echo "✓ Only python_package_folder distribution files found"
 
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always
