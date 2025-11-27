@@ -541,8 +541,16 @@ class BuildManager:
                 if root_module in stdlib_modules:
                     continue
 
+                # Skip if it's local or external (already copied, don't add as dependency)
+                if imp.classification in ("local", "external"):
+                    continue
+
                 # If classified as third_party, try to get actual package name
                 if imp.classification == "third_party":
+                    # Double-check: if it resolves to a file in src_dir, it's actually local
+                    # (might have been copied and now resolves locally)
+                    if imp.resolved_path and imp.resolved_path.is_relative_to(self.src_dir):
+                        continue  # Skip - it's a local file, not a third-party package
                     # Check cache first
                     if root_module not in package_name_cache:
                         package_name_cache[root_module] = self._get_package_name_from_import(

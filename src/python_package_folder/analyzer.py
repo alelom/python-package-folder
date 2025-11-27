@@ -328,6 +328,26 @@ class ImportAnalyzer:
             if potential_file.exists():
                 return potential_file
 
+            # Check common subdirectories in parent (e.g., _shared, shared, common)
+            # This handles cases like src/_shared/better_enum.py
+            common_subdirs = ["_shared", "shared", "common", "_common"]
+            for subdir_name in common_subdirs:
+                subdir = parent / subdir_name
+                if subdir.exists() and subdir.is_dir():
+                    # Check if module file exists in subdirectory
+                    potential_subdir_file = subdir / f"{module_name.split('.')[-1]}.py"
+                    if potential_subdir_file.exists():
+                        return potential_subdir_file
+                    # Check if module directory exists in subdirectory
+                    potential_subdir_module = subdir / module_name.replace(".", "/")
+                    if (
+                        potential_subdir_module.is_dir()
+                        and (potential_subdir_module / "__init__.py").exists()
+                    ):
+                        return potential_subdir_module / "__init__.py"
+                    if potential_subdir_module.with_suffix(".py").is_file():
+                        return potential_subdir_module.with_suffix(".py")
+
         return None
 
     def is_third_party(self, module_name: str) -> bool:
