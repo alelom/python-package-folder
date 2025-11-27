@@ -219,11 +219,15 @@ class TestBuildManager:
         assert len(external_deps) >= 2
 
         # Check that files were copied
+        # some_globals is a simple import, so it should be copied directly
         copied_some_globals = src_dir / "some_globals.py"
         assert copied_some_globals.exists()
 
-        copied_utility = src_dir / "utility_folder"
-        assert copied_utility.exists()
+        # utility_folder is imported as folder_structure.utility_folder, so structure should be preserved
+        copied_utility = src_dir / "folder_structure" / "utility_folder"
+        assert copied_utility.exists(), (
+            f"utility_folder should be copied with structure at {copied_utility}"
+        )
         assert (copied_utility / "some_utility.py").exists()
 
     def test_prepare_build_idempotent(self, test_project_root: Path) -> None:
@@ -265,7 +269,8 @@ class TestBuildManager:
 
         # Verify files were copied
         copied_file = src_dir / "some_globals.py"
-        copied_dir = src_dir / "utility_folder"
+        # utility_folder is imported as folder_structure.utility_folder, so structure should be preserved
+        copied_dir = src_dir / "folder_structure" / "utility_folder"
         assert copied_file.exists()
         assert copied_dir.exists()
 
@@ -481,9 +486,9 @@ class TestExclusionPatterns:
 
         manager.prepare_build()
 
-        # Verify utility_folder was copied
-        copied_utility = src_dir / "utility_folder"
-        assert copied_utility.exists(), "utility_folder should be copied"
+        # Verify utility_folder was copied (with structure preserved)
+        copied_utility = src_dir / "folder_structure" / "utility_folder"
+        assert copied_utility.exists(), "utility_folder should be copied with structure"
         assert (copied_utility / "some_utility.py").exists(), "some_utility.py should be copied"
 
         # Verify _SS directory was NOT copied
@@ -631,9 +636,10 @@ from some_globals import SOME_GLOBAL_VARIABLE
 
         manager.prepare_build()
 
-        # Verify nested_package was copied
-        copied_nested = src_dir / "nested_package"
-        assert copied_nested.exists(), "nested_package should be copied"
+        # Verify nested_package was copied (with structure preserved)
+        # Import is "folder_structure.nested_package.module", so structure should be preserved
+        copied_nested = src_dir / "folder_structure" / "nested_package"
+        assert copied_nested.exists(), "nested_package should be copied with structure"
         assert (copied_nested / "module.py").exists(), "module.py should be copied"
 
         # Verify nested _SS directory was NOT copied

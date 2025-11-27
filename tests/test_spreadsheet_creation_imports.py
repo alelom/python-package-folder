@@ -137,9 +137,12 @@ packages = ["src/test_package"]
             "spreadsheet modules should be found as external dependencies"
         )
 
-        # Verify spreadsheet_creation directory was copied
-        copied_dir = src_dir / "spreadsheet_creation"
-        assert copied_dir.exists(), "spreadsheet_creation directory should be copied"
+        # Verify spreadsheet_creation directory was copied with full structure preserved
+        # Import is "data.spreadsheet_creation.spreadsheet_formatting_dataclasses", so structure should be preserved
+        copied_dir = src_dir / "data" / "spreadsheet_creation"
+        assert copied_dir.exists(), (
+            f"spreadsheet_creation directory should be copied with structure at {copied_dir}"
+        )
         assert (copied_dir / "spreadsheet_formatting_dataclasses.py").exists(), (
             "spreadsheet_formatting_dataclasses.py should be copied"
         )

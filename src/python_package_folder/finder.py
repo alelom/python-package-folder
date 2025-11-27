@@ -151,8 +151,8 @@ class ExternalDependencyFinder:
         """
         Determine where an external file should be copied within src_dir.
 
-        For files, attempts to maintain the module structure. For directories,
-        places them directly in src_dir with their original name.
+        Preserves the original directory structure relative to project_root or src
+        to maintain import paths like `from models. ...` or `from data. ...`.
 
         Args:
             source_path: Path to the source file or directory
@@ -164,31 +164,69 @@ class ExternalDependencyFinder:
         if not source_path.exists():
             return None
 
-        # Always create target within src_dir
         module_parts = module_name.split(".")
 
-        if source_path.is_file():
-            # For a file, create the directory structure based on module name
-            if len(module_parts) > 1:
-                # It's a submodule, create the directory structure
-                target = self.src_dir / "/".join(module_parts[:-1]) / source_path.name
+        # Determine the base directory for calculating relative paths
+        # If source is under src/, use src/ as base to preserve structure
+        src_base = self.project_root / "src"
+        if src_base.exists() and source_path.is_relative_to(src_base):
+            # Source is under src/, preserve the path structure relative to src/
+            # This ensures imports like `from models. ...` work correctly
+            try:
+                relative_path = source_path.relative_to(src_base)
+                target = self.src_dir / relative_path
+                return target
+            except ValueError:
+                pass
+
+        # For sources not under src/, try to preserve structure based on module name
+        # Check if the module name structure matches the source path structure
+        if len(module_parts) > 1:
+            # For directories, check if the module path (excluding the last part for files) matches
+            if source_path.is_dir():
+                # For directories, check if module parts match the directory structure
+                # e.g., module "folder_structure.utility_folder.some_utility" with dir "folder_structure/utility_folder"
+                # should preserve "folder_structure/utility_folder" structure
+                # Calculate relative path from project_root
+                try:
+                    relative_path = source_path.relative_to(self.project_root)
+                    # If the module starts with the same parts as the relative path, preserve structure
+                    relative_parts = list(relative_path.parts)
+                    # Check if module_parts[:-1] (excluding the file/module name) matches relative_parts
+                    if len(module_parts) > len(relative_parts):
+                        # Module has more parts (includes the file name), check if the directory parts match
+                        module_dir_parts = module_parts[: len(relative_parts)]
+                        if module_dir_parts == relative_parts:
+                            # Preserve the full structure
+                            target = self.src_dir / relative_path
+                            return target
+                    # Try matching from the end
+                    if len(relative_parts) <= len(module_parts):
+                        # Check if the last parts of module match the relative path
+                        for i in range(1, min(len(relative_parts), len(module_parts)) + 1):
+                            if module_parts[-i:] == relative_parts[-i:]:
+                                # Match found, preserve structure based on module name
+                                target = self.src_dir / "/".join(
+                                    module_parts[: -i + 1 if i > 1 else len(module_parts)]
+                                )
+                                return target
+                except ValueError:
+                    pass
+                # Fallback: preserve structure based on module name (excluding last part for files)
+                target = self.src_dir / "/".join(module_parts[:-1])
+                return target
             else:
-                # Top-level module - try to find the main package directory
-                # or create a matching structure
-                main_pkg = self._find_main_package()
-                if main_pkg:
-                    target = main_pkg / source_path.name
-                else:
-                    target = self.src_dir / source_path.name
-            return target
+                # For files, preserve structure based on module name (excluding filename)
+                target = self.src_dir / "/".join(module_parts[:-1]) / source_path.name
+                return target
 
-        # If it's a directory, copy the whole directory
-        if source_path.is_dir():
-            # Use the directory name directly in src_dir
+        # Simple top-level import - copy directly to src_dir
+        # This handles cases like `from some_globals import ...`
+        if source_path.is_file():
             target = self.src_dir / source_path.name
-            return target
-
-        return None
+        else:
+            target = self.src_dir / source_path.name
+        return target
 
     def _should_exclude_path(self, path: Path) -> bool:
         """
