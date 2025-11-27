@@ -339,6 +339,13 @@ class BuildManager:
                 shutil.copy2(source, target)
                 self.copied_files.append(target)
                 print(f"Copied external file: {source} -> {target}")
+                # If copying a Python file, ensure parent directory has __init__.py
+                # This helps type checkers resolve imports correctly
+                if source.suffix == ".py" and target.parent != self.src_dir:
+                    init_file = target.parent / "__init__.py"
+                    if not init_file.exists():
+                        init_file.write_text("", encoding="utf-8")
+                        self.copied_files.append(init_file)
             elif source.is_dir():
                 if target.exists():
                     shutil.rmtree(target)
@@ -354,6 +361,8 @@ class BuildManager:
         Copy a directory tree, excluding certain patterns.
 
         Excludes directories matching patterns like _SS, __SS, _sandbox, etc.
+        Ensures __init__.py files exist in directories containing Python files
+        so that type checkers can resolve imports correctly.
 
         Args:
             src: Source directory
@@ -385,6 +394,9 @@ class BuildManager:
         # Create destination directory
         dst.mkdir(parents=True, exist_ok=True)
 
+        has_python_files = False
+        copied_python_files = []
+
         # Copy files and subdirectories, excluding patterns
         for item in src.iterdir():
             if should_exclude(item):
@@ -395,8 +407,39 @@ class BuildManager:
 
             if src_item.is_file():
                 shutil.copy2(src_item, dst_item)
+                if src_item.suffix == ".py":
+                    has_python_files = True
+                    copied_python_files.append(dst_item)
             elif src_item.is_dir():
                 self._copytree_excluding(src_item, dst_item)
+                # Check if the subdirectory has Python files
+                if any(dst_item.rglob("*.py")):
+                    has_python_files = True
+
+        # Ensure __init__.py exists in directories containing Python files
+        # This is needed for type checkers to resolve imports correctly
+        # Also ensure all parent directories in the path have __init__.py
+        if has_python_files:
+            init_file = dst / "__init__.py"
+            if not init_file.exists():
+                # Create an empty __init__.py file
+                init_file.write_text("", encoding="utf-8")
+                self.copied_files.append(init_file)
+
+            # Ensure all parent directories up to src_dir also have __init__.py
+            # This helps type checkers resolve nested imports like:
+            # from empty_drawing_detection.models.Information_extraction._shared_ie.ie_enums import ...
+            current = dst
+            while current != self.src_dir and current.is_relative_to(self.src_dir):
+                parent_init = current.parent / "__init__.py"
+                if (
+                    parent_init.parent != self.src_dir
+                    and not parent_init.exists()
+                    and any(current.parent.rglob("*.py"))
+                ):
+                    parent_init.write_text("", encoding="utf-8")
+                    self.copied_files.append(parent_init)
+                current = current.parent
 
     def _get_package_name_from_import(self, module_name: str) -> str | None:
         """
