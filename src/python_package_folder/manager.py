@@ -563,21 +563,23 @@ class BuildManager:
                         # Fallback to using the import name
                         third_party_packages.add(root_module)
                 # If it's ambiguous or unresolved, and not stdlib/local/external,
-                # it's likely a third-party package that needs to be declared
+                # only add as dependency if we can verify it's actually an installed package
                 elif imp.classification == "ambiguous" or imp.classification is None:
                     # Check if it's not a local or external module
                     if not imp.resolved_path:
+                        # Try to verify it's actually an installed package before adding
                         # Check cache first
                         if root_module not in package_name_cache:
                             package_name_cache[root_module] = self._get_package_name_from_import(
                                 imp.module_name
                             )
                         actual_package = package_name_cache[root_module]
+                        # Only add if we can verify it's an actual installed package
+                        # Don't add ambiguous imports that we can't verify
                         if actual_package:
                             third_party_packages.add(actual_package)
-                        else:
-                            # Fallback: use import name (will be normalized later)
-                            third_party_packages.add(root_module)
+                        # If we can't verify it's a package, don't add it
+                        # (it's likely a local file that wasn't resolved properly)
 
         if total_files > 50:
             print()  # New line after progress indicator
