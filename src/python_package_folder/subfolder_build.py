@@ -251,6 +251,13 @@ class SubfolderBuildConfig:
             temp_pyproject_path.write_text(adjusted_content, encoding="utf-8")
             self.temp_pyproject = temp_pyproject_path
 
+            # Print the temporary pyproject.toml content for debugging
+            print("\n" + "=" * 80)
+            print("Temporary pyproject.toml content (from subfolder pyproject.toml):")
+            print("=" * 80)
+            print(adjusted_content)
+            print("=" * 80 + "\n")
+
             # If original pyproject.toml exists, temporarily move it
             if original_pyproject.exists():
                 backup_path = self.project_root / "pyproject.toml.original"
@@ -356,6 +363,13 @@ class SubfolderBuildConfig:
         # Write the modified content to a temporary file
         temp_pyproject_path = self.project_root / "pyproject.toml.temp"
         temp_pyproject_path.write_text(modified_content, encoding="utf-8")
+
+        # Print the temporary pyproject.toml content for debugging
+        print("\n" + "=" * 80)
+        print("Temporary pyproject.toml content (created from parent):")
+        print("=" * 80)
+        print(modified_content)
+        print("=" * 80 + "\n")
 
         # Move temp file to pyproject.toml for the build
         temp_pyproject_path.rename(original_pyproject)
