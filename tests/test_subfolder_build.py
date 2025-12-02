@@ -675,6 +675,118 @@ class TestSubfolderBuildTemporaryPyprojectCreation:
         # Cleanup
         config.restore()
 
+    def test_file_exclusion_patterns_added(self, test_project_with_pyproject: Path) -> None:
+        """Test that file exclusion patterns are added to temporary pyproject.toml."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Create various non-package files and directories that should be excluded
+        (project_root / ".cursor").mkdir()
+        (project_root / ".github").mkdir()
+        (project_root / ".vscode").mkdir()
+        (project_root / "data").mkdir()
+        (project_root / "docs").mkdir()
+        (project_root / "references").mkdir()
+        (project_root / "reports").mkdir()
+        (project_root / "scripts").mkdir()
+        (project_root / "tests").mkdir()
+        (project_root / "Dockerfile").write_text("# Dockerfile")
+        (project_root / ".gitignore").write_text("*.pyc")
+
+        # Ensure no pyproject.toml in subfolder
+        subfolder_pyproject = subfolder / "pyproject.toml"
+        if subfolder_pyproject.exists():
+            subfolder_pyproject.unlink()
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+            package_name="test-package",
+        )
+
+        pyproject_path = config.create_temp_pyproject()
+
+        assert pyproject_path is not None
+        assert pyproject_path.exists()
+        content = pyproject_path.read_text()
+
+        # Verify [tool.hatch.build] section exists
+        assert "[tool.hatch.build]" in content
+
+        # Verify paths-exclude is present
+        assert "paths-exclude = [" in content
+
+        # Verify common exclusion patterns are included
+        assert '".cursor/**"' in content
+        assert '".github/**"' in content
+        assert '".vscode/**"' in content
+        assert '"data/**"' in content
+        assert '"docs/**"' in content
+        assert '"references/**"' in content
+        assert '"reports/**"' in content
+        assert '"scripts/**"' in content
+        assert '"tests/**"' in content
+        assert '"dist/**"' in content
+        assert '"build/**"' in content
+        assert '"*.egg-info/**"' in content
+        assert '"__pycache__/**"' in content
+        assert '".pytest_cache/**"' in content
+        assert '".git/**"' in content
+        assert '"Dockerfile"' in content
+        assert '".gitignore"' in content
+
+        # Cleanup
+        config.restore()
+
+    def test_file_exclusion_patterns_with_subfolder_pyproject(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that file exclusion patterns are added when subfolder has its own pyproject.toml."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Create various non-package files that should be excluded
+        (project_root / ".cursor").mkdir()
+        (project_root / "data").mkdir()
+        (project_root / "docs").mkdir()
+
+        # Create pyproject.toml in subfolder
+        subfolder_pyproject_content = """[project]
+name = "subfolder-package"
+version = "1.0.0"
+description = "Subfolder package"
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject_content)
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="2.0.0",  # Should be ignored since subfolder has its own
+        )
+
+        pyproject_path = config.create_temp_pyproject()
+
+        assert pyproject_path is not None
+        assert pyproject_path.exists()
+        content = pyproject_path.read_text()
+
+        # Verify [tool.hatch.build] section exists
+        assert "[tool.hatch.build]" in content
+
+        # Verify paths-exclude is present
+        assert "paths-exclude = [" in content
+
+        # Verify common exclusion patterns are included
+        assert '".cursor/**"' in content
+        assert '"data/**"' in content
+        assert '"docs/**"' in content
+        assert '"dist/**"' in content
+        assert '"build/**"' in content
+
+        # Cleanup
+        config.restore()
+
     def test_third_party_dependencies_added(self, test_project_with_pyproject: Path) -> None:
         """Test that third-party dependencies are added to temporary pyproject.toml."""
         project_root = test_project_with_pyproject

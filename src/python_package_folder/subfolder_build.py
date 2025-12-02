@@ -140,12 +140,18 @@ class SubfolderBuildConfig:
         lines = content.split("\n")
         result = []
         in_hatch_build = False
+        in_hatch_build_section = False
         packages_set = False
+        paths_exclude_set = False
 
         for line in lines:
             # Detect hatch build section
             if line.strip().startswith("[tool.hatch.build.targets.wheel]"):
                 in_hatch_build = True
+                result.append(line)
+                continue
+            elif line.strip().startswith("[tool.hatch.build]"):
+                in_hatch_build_section = True
                 result.append(line)
                 continue
             elif line.strip().startswith("[") and in_hatch_build:
@@ -154,6 +160,15 @@ class SubfolderBuildConfig:
                     packages_str = f'"{correct_packages_path}"'
                     result.append(f"packages = [{packages_str}]")
                 in_hatch_build = False
+                result.append(line)
+            elif line.strip().startswith("[") and in_hatch_build_section:
+                # End of hatch build section
+                in_hatch_build_section = False
+                result.append(line)
+            elif in_hatch_build_section:
+                # Track if paths-exclude already exists
+                if re.match(r"^\s*paths-exclude\s*=", line):
+                    paths_exclude_set = True
                 result.append(line)
             elif in_hatch_build:
                 # Modify packages path if found
@@ -193,6 +208,43 @@ class SubfolderBuildConfig:
                 result.append("[tool.hatch.build.targets.wheel]")
                 packages_str = f'"{correct_packages_path}"'
                 result.append(f"packages = [{packages_str}]")
+
+        # Add file exclusion patterns to prevent including non-package files
+        # Only add if paths-exclude wasn't already set (we merged it above)
+        if not paths_exclude_set:
+            result.append("")
+            result.append("[tool.hatch.build]")
+            result.append("paths-exclude = [")
+            result.append('    ".cursor/**",')
+            result.append('    ".github/**",')
+            result.append('    ".vscode/**",')
+            result.append('    ".idea/**",')
+            result.append('    "data/**",')
+            result.append('    "docs/**",')
+            result.append('    "references/**",')
+            result.append('    "reports/**",')
+            result.append('    "scripts/**",')
+            result.append('    "tests/**",')
+            result.append('    "test/**",')
+            result.append('    "dist/**",')
+            result.append('    "build/**",')
+            result.append('    "*.egg-info/**",')
+            result.append('    "__pycache__/**",')
+            result.append('    ".pytest_cache/**",')
+            result.append('    ".mypy_cache/**",')
+            result.append('    ".venv/**",')
+            result.append('    "venv/**",')
+            result.append('    ".git/**",')
+            result.append('    ".gitignore",')
+            result.append('    ".gitattributes",')
+            result.append('    "Dockerfile",')
+            result.append('    ".dockerignore",')
+            result.append('    ".pylintrc",')
+            result.append('    "pyrightconfig.json",')
+            result.append('    "git-filter-repo",')
+            result.append('    "pyproject.toml.original",')
+            result.append('    "README.md.backup",')
+            result.append("]")
 
         return "\n".join(result)
 
@@ -531,6 +583,42 @@ class SubfolderBuildConfig:
                 result.append("[tool.hatch.build.targets.wheel]")
             packages_str = ", ".join(f'"{p}"' for p in package_dirs)
             result.append(f"packages = [{packages_str}]")
+
+        # Add file exclusion patterns to prevent including non-package files
+        # This ensures only the subfolder code is included, not project root files
+        result.append("")
+        result.append("[tool.hatch.build]")
+        result.append("paths-exclude = [")
+        result.append('    ".cursor/**",')
+        result.append('    ".github/**",')
+        result.append('    ".vscode/**",')
+        result.append('    ".idea/**",')
+        result.append('    "data/**",')
+        result.append('    "docs/**",')
+        result.append('    "references/**",')
+        result.append('    "reports/**",')
+        result.append('    "scripts/**",')
+        result.append('    "tests/**",')
+        result.append('    "test/**",')
+        result.append('    "dist/**",')
+        result.append('    "build/**",')
+        result.append('    "*.egg-info/**",')
+        result.append('    "__pycache__/**",')
+        result.append('    ".pytest_cache/**",')
+        result.append('    ".mypy_cache/**",')
+        result.append('    ".venv/**",')
+        result.append('    "venv/**",')
+        result.append('    ".git/**",')
+        result.append('    ".gitignore",')
+        result.append('    ".gitattributes",')
+        result.append('    "Dockerfile",')
+        result.append('    ".dockerignore",')
+        result.append('    ".pylintrc",')
+        result.append('    "pyrightconfig.json",')
+        result.append('    "git-filter-repo",')
+        result.append('    "pyproject.toml.original",')
+        result.append('    "README.md.backup",')
+        result.append("]")
 
         # Add dependency group if specified
         if dependency_group:
