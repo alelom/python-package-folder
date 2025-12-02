@@ -141,8 +141,9 @@ class SubfolderBuildConfig:
         result = []
         in_hatch_build = False
         in_hatch_build_section = False
+        in_sdist_section = False
         packages_set = False
-        paths_exclude_set = False
+        only_include_set = False
 
         for line in lines:
             # Detect hatch build section
@@ -165,10 +166,20 @@ class SubfolderBuildConfig:
                 # End of hatch build section
                 in_hatch_build_section = False
                 result.append(line)
+            elif line.strip().startswith("[tool.hatch.build.targets.sdist]"):
+                in_sdist_section = True
+                result.append(line)
+                continue
+            elif line.strip().startswith("[") and in_sdist_section:
+                # End of sdist section
+                in_sdist_section = False
+                result.append(line)
+            elif in_sdist_section:
+                # Track if only-include already exists
+                if re.match(r"^\s*only-include\s*=", line):
+                    only_include_set = True
+                result.append(line)
             elif in_hatch_build_section:
-                # Track if paths-exclude already exists
-                if re.match(r"^\s*paths-exclude\s*=", line):
-                    paths_exclude_set = True
                 result.append(line)
             elif in_hatch_build:
                 # Modify packages path if found
@@ -209,42 +220,21 @@ class SubfolderBuildConfig:
                 packages_str = f'"{correct_packages_path}"'
                 result.append(f"packages = [{packages_str}]")
 
-        # Add file exclusion patterns to prevent including non-package files
-        # Only add if paths-exclude wasn't already set (we merged it above)
-        if not paths_exclude_set:
+        # Use only-include for source distributions to ensure only the subfolder is included
+        # This prevents including files from the project root
+        if correct_packages_path and not only_include_set:
             result.append("")
-            result.append("[tool.hatch.build]")
-            result.append("paths-exclude = [")
-            result.append('    ".cursor/**",')
-            result.append('    ".github/**",')
-            result.append('    ".vscode/**",')
-            result.append('    ".idea/**",')
-            result.append('    "data/**",')
-            result.append('    "docs/**",')
-            result.append('    "references/**",')
-            result.append('    "reports/**",')
-            result.append('    "scripts/**",')
-            result.append('    "tests/**",')
-            result.append('    "test/**",')
-            result.append('    "dist/**",')
-            result.append('    "build/**",')
-            result.append('    "*.egg-info/**",')
-            result.append('    "__pycache__/**",')
-            result.append('    ".pytest_cache/**",')
-            result.append('    ".mypy_cache/**",')
-            result.append('    ".venv/**",')
-            result.append('    "venv/**",')
-            result.append('    ".git/**",')
-            result.append('    ".gitignore",')
-            result.append('    ".gitattributes",')
-            result.append('    "Dockerfile",')
-            result.append('    ".dockerignore",')
-            result.append('    ".pylintrc",')
-            result.append('    "pyrightconfig.json",')
-            result.append('    "git-filter-repo",')
-            result.append('    "pyproject.toml.original",')
-            result.append('    "README.md.backup",')
-            result.append("]")
+            result.append("[tool.hatch.build.targets.sdist]")
+            # Include only the subfolder directory and necessary files
+            only_include_paths = [correct_packages_path]
+            # Also include pyproject.toml and README if they exist
+            only_include_paths.append("pyproject.toml")
+            only_include_paths.append("README.md")
+            only_include_paths.append("README.rst")
+            only_include_paths.append("README.txt")
+            only_include_paths.append("README")
+            only_include_str = ", ".join(f'"{p}"' for p in only_include_paths)
+            result.append(f"only-include = [{only_include_str}]")
 
         return "\n".join(result)
 
@@ -584,41 +574,21 @@ class SubfolderBuildConfig:
             packages_str = ", ".join(f'"{p}"' for p in package_dirs)
             result.append(f"packages = [{packages_str}]")
 
-        # Add file exclusion patterns to prevent including non-package files
-        # This ensures only the subfolder code is included, not project root files
-        result.append("")
-        result.append("[tool.hatch.build]")
-        result.append("paths-exclude = [")
-        result.append('    ".cursor/**",')
-        result.append('    ".github/**",')
-        result.append('    ".vscode/**",')
-        result.append('    ".idea/**",')
-        result.append('    "data/**",')
-        result.append('    "docs/**",')
-        result.append('    "references/**",')
-        result.append('    "reports/**",')
-        result.append('    "scripts/**",')
-        result.append('    "tests/**",')
-        result.append('    "test/**",')
-        result.append('    "dist/**",')
-        result.append('    "build/**",')
-        result.append('    "*.egg-info/**",')
-        result.append('    "__pycache__/**",')
-        result.append('    ".pytest_cache/**",')
-        result.append('    ".mypy_cache/**",')
-        result.append('    ".venv/**",')
-        result.append('    "venv/**",')
-        result.append('    ".git/**",')
-        result.append('    ".gitignore",')
-        result.append('    ".gitattributes",')
-        result.append('    "Dockerfile",')
-        result.append('    ".dockerignore",')
-        result.append('    ".pylintrc",')
-        result.append('    "pyrightconfig.json",')
-        result.append('    "git-filter-repo",')
-        result.append('    "pyproject.toml.original",')
-        result.append('    "README.md.backup",')
-        result.append("]")
+        # Use only-include for source distributions to ensure only the subfolder is included
+        # This prevents including files from the project root
+        if package_dirs:
+            result.append("")
+            result.append("[tool.hatch.build.targets.sdist]")
+            # Include only the subfolder directory and necessary files
+            only_include_paths = [package_dirs[0]]
+            # Also include pyproject.toml and README if they exist
+            only_include_paths.append("pyproject.toml")
+            only_include_paths.append("README.md")
+            only_include_paths.append("README.rst")
+            only_include_paths.append("README.txt")
+            only_include_paths.append("README")
+            only_include_str = ", ".join(f'"{p}"' for p in only_include_paths)
+            result.append(f"only-include = [{only_include_str}]")
 
         # Add dependency group if specified
         if dependency_group:

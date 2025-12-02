@@ -711,30 +711,24 @@ class TestSubfolderBuildTemporaryPyprojectCreation:
         assert pyproject_path.exists()
         content = pyproject_path.read_text()
 
-        # Verify [tool.hatch.build] section exists
-        assert "[tool.hatch.build]" in content
+        # Verify [tool.hatch.build.targets.sdist] section exists
+        assert "[tool.hatch.build.targets.sdist]" in content
 
-        # Verify paths-exclude is present
-        assert "paths-exclude = [" in content
+        # Verify only-include is present
+        assert "only-include = [" in content
 
-        # Verify common exclusion patterns are included
-        assert '".cursor/**"' in content
-        assert '".github/**"' in content
-        assert '".vscode/**"' in content
-        assert '"data/**"' in content
-        assert '"docs/**"' in content
-        assert '"references/**"' in content
-        assert '"reports/**"' in content
-        assert '"scripts/**"' in content
-        assert '"tests/**"' in content
-        assert '"dist/**"' in content
-        assert '"build/**"' in content
-        assert '"*.egg-info/**"' in content
-        assert '"__pycache__/**"' in content
-        assert '".pytest_cache/**"' in content
-        assert '".git/**"' in content
-        assert '"Dockerfile"' in content
-        assert '".gitignore"' in content
+        # Verify the subfolder is included
+        assert '"subfolder"' in content
+
+        # Verify necessary files are included
+        assert '"pyproject.toml"' in content
+        assert '"README.md"' in content
+
+        # Verify non-package directories are NOT explicitly included
+        assert '".cursor"' not in content or '".cursor"' not in content.split("only-include")[1]
+        assert '".github"' not in content or '".github"' not in content.split("only-include")[1]
+        assert '"data"' not in content or '"data"' not in content.split("only-include")[1]
+        assert '"docs"' not in content or '"docs"' not in content.split("only-include")[1]
 
         # Cleanup
         config.restore()
@@ -771,18 +765,17 @@ description = "Subfolder package"
         assert pyproject_path.exists()
         content = pyproject_path.read_text()
 
-        # Verify [tool.hatch.build] section exists
-        assert "[tool.hatch.build]" in content
+        # Verify [tool.hatch.build.targets.sdist] section exists
+        assert "[tool.hatch.build.targets.sdist]" in content
 
-        # Verify paths-exclude is present
-        assert "paths-exclude = [" in content
+        # Verify only-include is present
+        assert "only-include = [" in content
 
-        # Verify common exclusion patterns are included
-        assert '".cursor/**"' in content
-        assert '"data/**"' in content
-        assert '"docs/**"' in content
-        assert '"dist/**"' in content
-        assert '"build/**"' in content
+        # Verify the subfolder is included
+        assert '"subfolder-package"' in content or '"subfolder"' in content
+
+        # Verify necessary files are included
+        assert '"pyproject.toml"' in content
 
         # Cleanup
         config.restore()
