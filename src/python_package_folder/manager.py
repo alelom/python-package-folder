@@ -272,9 +272,12 @@ class BuildManager:
         for dep in external_deps:
             self._copy_dependency(dep)
 
-        # For subfolder builds, convert absolute imports of copied dependencies to relative imports
+        # For subfolder builds, fix imports
         if self._is_subfolder_build() and external_deps:
-            self._convert_copied_dependency_imports_to_relative(python_files, external_deps)
+            # Fix relative imports in copied dependency files (convert to absolute)
+            self._fix_relative_imports_in_copied_files(external_deps)
+            # Convert absolute imports of copied dependencies and local files to relative imports
+            self._convert_imports_to_relative(python_files, external_deps)
 
         # For subfolder builds, extract third-party dependencies and add to pyproject.toml
         if self._is_subfolder_build() and self.subfolder_config:
@@ -635,15 +638,111 @@ class BuildManager:
 
         return sorted(list(third_party_packages))
 
-    def _convert_copied_dependency_imports_to_relative(
+    def _fix_relative_imports_in_copied_files(
+        self, external_deps: list[ExternalDependency]
+    ) -> None:
+        """
+        Fix relative imports in copied dependency files.
+
+        When files are copied into the subfolder, their relative imports (like
+        `from ._shared.shared_dataclasses import ...`) break because the file
+        structure has changed. Convert these to absolute imports based on the
+        target location.
+
+        Args:
+            external_deps: List of external dependencies that were copied
+        """
+        import ast
+        import re
+
+        # Find all Python files in copied dependencies
+        copied_files: list[Path] = []
+        for dep in external_deps:
+            if dep.target_path.is_file() and dep.target_path.suffix == ".py":
+                copied_files.append(dep.target_path)
+            elif dep.target_path.is_dir():
+                copied_files.extend(dep.target_path.rglob("*.py"))
+
+        for file_path in copied_files:
+            try:
+                content = file_path.read_text(encoding="utf-8")
+                original_content = content
+                lines = content.split("\n")
+                modified = False
+
+                try:
+                    tree = ast.parse(content, filename=str(file_path))
+                except SyntaxError:
+                    continue
+
+                lines_to_modify: dict[int, str] = {}
+
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ImportFrom):
+                        if node.module is None:
+                            continue
+
+                        # Check if this is a relative import (level > 0)
+                        if node.level == 0:
+                            continue
+
+                        line_num = node.lineno - 1
+                        if line_num < 0 or line_num >= len(lines):
+                            continue
+
+                        original_line = lines[line_num]
+
+                        # Convert relative import to absolute based on target location
+                        # When a file is copied to the package root, relative imports need to be absolute
+                        # For example: from ._shared.shared_dataclasses -> from _shared.shared_dataclasses
+                        if node.module:
+                            # Remove the leading dots and convert to absolute
+                            # If it was `from ._shared.shared_dataclasses`, it becomes `from _shared.shared_dataclasses`
+                            absolute_module = node.module
+                            new_line = re.sub(
+                                rf"^(\s*)from\s+\.+{re.escape(node.module)}\s+import",
+                                rf"\1from {absolute_module} import",
+                                original_line,
+                            )
+                        else:
+                            # from . import X -> from . import X (keep as relative, but at package root level)
+                            # Actually, if we're at package root, this should work as-is
+                            # But if the file was in a subdirectory, we need to adjust
+                            # For now, keep it as relative import
+                            continue
+
+                        if new_line != original_line:
+                            lines_to_modify[line_num] = new_line
+                            modified = True
+
+                if modified:
+                    for line_num, new_line in lines_to_modify.items():
+                        lines[line_num] = new_line
+
+                    new_content = "\n".join(lines)
+                    if file_path not in self._modified_import_files:
+                        self._modified_import_files[file_path] = original_content
+
+                    file_path.write_text(new_content, encoding="utf-8")
+                    print(f"Fixed relative imports in copied file: {file_path}")
+
+            except Exception as e:
+                print(
+                    f"Warning: Could not fix imports in copied file {file_path}: {e}",
+                    file=sys.stderr,
+                )
+
+    def _convert_imports_to_relative(
         self, python_files: list[Path], external_deps: list[ExternalDependency]
     ) -> None:
         """
-        Convert absolute imports of copied dependencies to relative imports.
+        Convert absolute imports to relative imports for subfolder builds.
 
         For subfolder builds, when external dependencies are copied into the subfolder,
-        imports in the subfolder's files need to be converted from absolute to relative
-        so they work correctly when the package is installed.
+        imports need to be converted from absolute to relative so they work correctly
+        when the package is installed. This includes:
+        1. Imports of copied dependencies (e.g., `from _shared.image_utils` -> `from ._shared.image_utils`)
+        2. Imports of local files within the subfolder (e.g., `from detect_empty_drawings_utils` -> `from .detect_empty_drawings_utils`)
 
         Args:
             python_files: List of Python files in the source directory
@@ -652,17 +751,27 @@ class BuildManager:
         import ast
         import re
 
-        # Build a set of import names that were copied (e.g., "_shared", "_globals", "empty_drawing_detection_config")
+        # Build a set of import names that were copied
         copied_import_names: set[str] = set()
         for dep in external_deps:
-            # Get the root module name (first part of the import)
             root_module = dep.import_name.split(".")[0]
             copied_import_names.add(root_module)
-            # Also add the full module name for nested imports
             copied_import_names.add(dep.import_name)
 
-        if not copied_import_names:
-            return
+        # Build a set of local file names in the subfolder (excluding copied dependencies)
+        local_file_names: set[str] = set()
+        for file_path in python_files:
+            # Skip files that are part of copied dependencies
+            is_copied_file = any(file_path.is_relative_to(dep.target_path) for dep in external_deps)
+            if is_copied_file:
+                continue
+            if not file_path.is_relative_to(self.src_dir):
+                continue
+            # Get the module name (filename without .py extension)
+            if file_path.suffix == ".py":
+                module_name = file_path.stem
+                if module_name != "__init__":
+                    local_file_names.add(module_name)
 
         # Only modify files that are in the original subfolder (not the copied dependencies)
         for file_path in python_files:
@@ -696,12 +805,14 @@ class BuildManager:
                         if node.module is None:
                             continue
 
-                        # Check if this import matches a copied dependency
+                        # Check if this import matches a copied dependency or a local file
                         root_module = node.module.split(".")[0]
-                        if (
-                            root_module not in copied_import_names
-                            and node.module not in copied_import_names
-                        ):
+                        is_copied_dependency = (
+                            root_module in copied_import_names or node.module in copied_import_names
+                        )
+                        is_local_file = root_module in local_file_names
+
+                        if not is_copied_dependency and not is_local_file:
                             continue
 
                         # Get the line content
@@ -731,7 +842,10 @@ class BuildManager:
                         # Handle "import X" statements
                         for alias in node.names:
                             root_module = alias.name.split(".")[0]
-                            if root_module not in copied_import_names:
+                            is_copied_dependency = root_module in copied_import_names
+                            is_local_file = root_module in local_file_names
+
+                            if not is_copied_dependency and not is_local_file:
                                 continue
 
                             line_num = node.lineno - 1

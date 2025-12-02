@@ -391,12 +391,18 @@ version = "0.1.0"
         subfolder.mkdir(parents=True)
         (subfolder / "__init__.py").write_text("")
 
+        # Create a local file that will be imported
+        local_file = subfolder / "local_utils.py"
+        local_file.write_text("def local_function(): return 42")
+
         # Create a file in subfolder that imports copied dependencies with absolute imports
         test_file = subfolder / "detect_empty_drawings.py"
         original_content = """from pathlib import Path
 from _shared.image_utils import save_PIL_image
 from _shared.file_utils import get_filepaths_config
 from _globals import is_testing
+from local_utils import local_function
+from config import get_config
 
 def analyze_folder():
     save_PIL_image()
@@ -414,6 +420,18 @@ def get_config():
 """
         test_file2.write_text(original_content2)
 
+        # Create a copied dependency file with relative imports (simulating detect_empty_drawings_utils.py)
+        # This will be created when _shared is copied
+        # First, let's create a file in _shared that will be copied
+        shared_utils = shared_dir / "shared_utils.py"
+        shared_utils.write_text(
+            """from .file_utils import get_filepaths_config
+
+def shared_function():
+    return get_filepaths_config()
+"""
+        )
+
         manager = BuildManager(project_root, subfolder)
 
         try:
@@ -430,12 +448,24 @@ def get_config():
             assert "from ._shared.image_utils import save_PIL_image" in modified_content
             assert "from ._shared.file_utils import get_filepaths_config" in modified_content
             assert "from ._globals import is_testing" in modified_content
+            # Verify local file imports were converted to relative
+            assert "from .local_utils import local_function" in modified_content
+            assert "from .config import get_config" in modified_content
             # Verify stdlib import was not changed
             assert "from pathlib import Path" in modified_content
 
             # Verify import statement conversion
             modified_content2 = test_file2.read_text()
             assert "from . import _globals" in modified_content2
+
+            # Verify relative imports in copied files were fixed
+            if (subfolder / "_shared" / "shared_utils.py").exists():
+                shared_utils_content = (subfolder / "_shared" / "shared_utils.py").read_text()
+                # The relative import should be converted to absolute
+                assert (
+                    "from .file_utils import" not in shared_utils_content
+                    or "from file_utils import" in shared_utils_content
+                )
 
             # Cleanup should restore original imports
             manager.cleanup()
