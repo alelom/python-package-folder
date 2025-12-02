@@ -88,6 +88,8 @@ class BuildManager:
         self.subfolder_config: SubfolderBuildConfig | None = None
         # Cache for package name lookups (expensive operation)
         self._packages_distributions_cache: dict[str, list[str]] | None = None
+        # Track files with modified imports and their original content
+        self._modified_import_files: dict[Path, str] = {}
 
         # Check if it's a valid Python package directory
         if not any(self.src_dir.glob("*.py")) and not (self.src_dir / "__init__.py").exists():
@@ -269,6 +271,10 @@ class BuildManager:
         # Copy external dependencies
         for dep in external_deps:
             self._copy_dependency(dep)
+
+        # For subfolder builds, convert absolute imports of copied dependencies to relative imports
+        if self._is_subfolder_build() and external_deps:
+            self._convert_copied_dependency_imports_to_relative(python_files, external_deps)
 
         # For subfolder builds, extract third-party dependencies and add to pyproject.toml
         if self._is_subfolder_build() and self.subfolder_config:
@@ -629,6 +635,147 @@ class BuildManager:
 
         return sorted(list(third_party_packages))
 
+    def _convert_copied_dependency_imports_to_relative(
+        self, python_files: list[Path], external_deps: list[ExternalDependency]
+    ) -> None:
+        """
+        Convert absolute imports of copied dependencies to relative imports.
+
+        For subfolder builds, when external dependencies are copied into the subfolder,
+        imports in the subfolder's files need to be converted from absolute to relative
+        so they work correctly when the package is installed.
+
+        Args:
+            python_files: List of Python files in the source directory
+            external_deps: List of external dependencies that were copied
+        """
+        import ast
+        import re
+
+        # Build a set of import names that were copied (e.g., "_shared", "_globals", "empty_drawing_detection_config")
+        copied_import_names: set[str] = set()
+        for dep in external_deps:
+            # Get the root module name (first part of the import)
+            root_module = dep.import_name.split(".")[0]
+            copied_import_names.add(root_module)
+            # Also add the full module name for nested imports
+            copied_import_names.add(dep.import_name)
+
+        if not copied_import_names:
+            return
+
+        # Only modify files that are in the original subfolder (not the copied dependencies)
+        for file_path in python_files:
+            # Skip files that are part of copied dependencies
+            is_copied_file = any(file_path.is_relative_to(dep.target_path) for dep in external_deps)
+            if is_copied_file:
+                continue
+
+            # Skip if file is not in src_dir (shouldn't happen, but safety check)
+            if not file_path.is_relative_to(self.src_dir):
+                continue
+
+            try:
+                content = file_path.read_text(encoding="utf-8")
+                original_content = content
+                lines = content.split("\n")
+                modified = False
+
+                # Parse the file with AST to find imports accurately
+                try:
+                    tree = ast.parse(content, filename=str(file_path))
+                except SyntaxError:
+                    # Skip files with syntax errors
+                    continue
+
+                # Track which lines need to be modified
+                lines_to_modify: dict[int, str] = {}
+
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ImportFrom):
+                        if node.module is None:
+                            continue
+
+                        # Check if this import matches a copied dependency
+                        root_module = node.module.split(".")[0]
+                        if (
+                            root_module not in copied_import_names
+                            and node.module not in copied_import_names
+                        ):
+                            continue
+
+                        # Get the line content
+                        line_num = node.lineno - 1  # Convert to 0-based index
+                        if line_num < 0 or line_num >= len(lines):
+                            continue
+
+                        original_line = lines[line_num]
+
+                        # Skip if already a relative import
+                        if original_line.strip().startswith("from ."):
+                            continue
+
+                        # Convert absolute import to relative import
+                        # from _shared.image_utils import ... -> from ._shared.image_utils import ...
+                        new_line = re.sub(
+                            rf"^(\s*)from\s+{re.escape(node.module)}\s+import",
+                            rf"\1from .{node.module} import",
+                            original_line,
+                        )
+
+                        if new_line != original_line:
+                            lines_to_modify[line_num] = new_line
+                            modified = True
+
+                    elif isinstance(node, ast.Import):
+                        # Handle "import X" statements
+                        for alias in node.names:
+                            root_module = alias.name.split(".")[0]
+                            if root_module not in copied_import_names:
+                                continue
+
+                            line_num = node.lineno - 1
+                            if line_num < 0 or line_num >= len(lines):
+                                continue
+
+                            original_line = lines[line_num]
+
+                            # Skip if already a relative import
+                            if original_line.strip().startswith("import ."):
+                                continue
+
+                            # Convert "import _shared" to "from . import _shared"
+                            # This is more complex, so we'll use a regex replacement
+                            new_line = re.sub(
+                                rf"^(\s*)import\s+{re.escape(alias.name)}\b",
+                                rf"\1from . import {alias.name}",
+                                original_line,
+                            )
+
+                            if new_line != original_line:
+                                lines_to_modify[line_num] = new_line
+                                modified = True
+
+                # Apply modifications
+                if modified:
+                    for line_num, new_line in lines_to_modify.items():
+                        lines[line_num] = new_line
+
+                    new_content = "\n".join(lines)
+                    # Store original content for restoration
+                    if file_path not in self._modified_import_files:
+                        self._modified_import_files[file_path] = original_content
+
+                    # Write modified content
+                    file_path.write_text(new_content, encoding="utf-8")
+                    print(f"Converted imports to relative in: {file_path}")
+
+            except Exception as e:
+                print(
+                    f"Warning: Could not modify imports in {file_path}: {e}",
+                    file=sys.stderr,
+                )
+
     def _report_ambiguous_imports(self, python_files: list[Path]) -> None:
         """
         Report any ambiguous imports that couldn't be resolved.
@@ -707,6 +854,19 @@ class BuildManager:
 
         self.copied_files.clear()
         self.copied_dirs.clear()
+
+        # Restore files with modified imports
+        for file_path, original_content in self._modified_import_files.items():
+            if file_path.exists():
+                try:
+                    file_path.write_text(original_content, encoding="utf-8")
+                    print(f"Restored original imports in: {file_path}")
+                except Exception as e:
+                    print(
+                        f"Warning: Could not restore imports in {file_path}: {e}",
+                        file=sys.stderr,
+                    )
+        self._modified_import_files.clear()
 
         # Remove all .egg-info directories in src_dir and project_root
         self._cleanup_egg_info_dirs()

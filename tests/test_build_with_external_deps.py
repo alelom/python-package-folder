@@ -363,6 +363,94 @@ class TestBuildManager:
         assert len(manager.copied_files) == 0
         assert len(manager.copied_dirs) == 0
 
+    def test_convert_copied_dependency_imports_to_relative(self, tmp_path: Path) -> None:
+        """Test that absolute imports of copied dependencies are converted to relative imports for subfolder builds."""
+        project_root = tmp_path / "test_project"
+        project_root.mkdir()
+
+        # Create pyproject.toml
+        (project_root / "pyproject.toml").write_text(
+            """[project]
+name = "test-package"
+version = "0.1.0"
+"""
+        )
+
+        # Create external dependency _shared
+        shared_dir = project_root / "_shared"
+        shared_dir.mkdir()
+        (shared_dir / "__init__.py").write_text("")
+        (shared_dir / "image_utils.py").write_text("def save_PIL_image(): pass")
+        (shared_dir / "file_utils.py").write_text("def get_filepaths_config(): pass")
+
+        # Create external dependency _globals
+        (project_root / "_globals.py").write_text("is_testing = False")
+
+        # Create subfolder to build
+        subfolder = project_root / "src" / "integration" / "empty_drawing_detection"
+        subfolder.mkdir(parents=True)
+        (subfolder / "__init__.py").write_text("")
+
+        # Create a file in subfolder that imports copied dependencies with absolute imports
+        test_file = subfolder / "detect_empty_drawings.py"
+        original_content = """from pathlib import Path
+from _shared.image_utils import save_PIL_image
+from _shared.file_utils import get_filepaths_config
+from _globals import is_testing
+
+def analyze_folder():
+    save_PIL_image()
+    get_filepaths_config()
+    return is_testing
+"""
+        test_file.write_text(original_content)
+
+        # Create another file with different import style
+        test_file2 = subfolder / "config.py"
+        original_content2 = """import _globals
+
+def get_config():
+    return _globals.is_testing
+"""
+        test_file2.write_text(original_content2)
+
+        manager = BuildManager(project_root, subfolder)
+
+        try:
+            # Prepare build - this should copy dependencies and convert imports
+            external_deps = manager.prepare_build(version="1.0.0", package_name="test-package")
+
+            # Verify dependencies were copied
+            assert len(external_deps) >= 2
+            assert (subfolder / "_shared").exists()
+            assert (subfolder / "_globals.py").exists()
+
+            # Verify imports were converted to relative
+            modified_content = test_file.read_text()
+            assert "from ._shared.image_utils import save_PIL_image" in modified_content
+            assert "from ._shared.file_utils import get_filepaths_config" in modified_content
+            assert "from ._globals import is_testing" in modified_content
+            # Verify stdlib import was not changed
+            assert "from pathlib import Path" in modified_content
+
+            # Verify import statement conversion
+            modified_content2 = test_file2.read_text()
+            assert "from . import _globals" in modified_content2
+
+            # Cleanup should restore original imports
+            manager.cleanup()
+
+            restored_content = test_file.read_text()
+            assert restored_content == original_content
+
+            restored_content2 = test_file2.read_text()
+            assert restored_content2 == original_content2
+
+        finally:
+            # Ensure cleanup even if test fails
+            if manager._modified_import_files:
+                manager.cleanup()
+
 
 class TestRealFolderStructure:
     """Tests using the real folder_structure from tests directory."""
