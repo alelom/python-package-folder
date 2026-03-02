@@ -44,7 +44,7 @@ def resolve_version_via_semantic_release(
     # 2. Package installation directory / scripts (for installed package)
     #    - For normal installs: direct file path
     #    - For zip/pex installs: extract to temporary file using as_file()
-    
+
     # First, try project root (development)
     dev_script = project_root / "scripts" / "get-next-version.cjs"
     if dev_script.exists():
@@ -65,7 +65,7 @@ def resolve_version_via_semantic_release(
                         script_path = script_path_candidate
                 except (TypeError, ValueError):
                     pass
-                
+
                 # If direct path didn't work, try as_file() for zip/pex installs
                 if script_path is None:
                     try:
@@ -75,7 +75,7 @@ def resolve_version_via_semantic_release(
                         pass
         except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
             pass
-        
+
         # Fallback: try relative to package directory
         if script_path is None:
             package_dir = Path(__file__).parent
