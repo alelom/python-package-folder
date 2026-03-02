@@ -42,39 +42,46 @@ def resolve_version_via_semantic_release(
     # Try to find the script in multiple locations:
     # 1. Project root / scripts (for development or when script is in repo)
     # 2. Package installation directory / scripts (for installed package)
-    script_paths: list[Path] = [
-        project_root / "scripts" / "get-next-version.cjs",
-    ]
-
-    # Try to locate script in installed package using importlib.resources
-    try:
-        package = resources.files("python_package_folder")
-        script_resource = package / "scripts" / "get-next-version.cjs"
-        if script_resource.is_file():
-            # Get the actual file path from the Traversable
-            # For normal file system installations, this resolves to the actual path
-            # For zip imports, we can't use as_file() here since it creates temporary
-            # files that are deleted when the context exits, so we fall back to
-            # the package directory path instead
-            try:
-                script_path = Path(str(script_resource))
-                if script_path.exists():
-                    script_paths.append(script_path)
-            except (TypeError, ValueError):
-                # Direct conversion failed (e.g., zip import), skip and use fallback
-                pass
-    except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
-        pass
-
-    # Fallback: try relative to package directory (works for both normal and zip imports)
-    package_dir = Path(__file__).parent
-    script_paths.append(package_dir / "scripts" / "get-next-version.cjs")
-
-    script_path = None
-    for path in script_paths:
-        if path.exists():
-            script_path = path
-            break
+    #    - For normal installs: direct file path
+    #    - For zip/pex installs: extract to temporary file
+    
+    script_path: Path | None = None
+    temp_script_file = None
+    
+    # First, try project root (development)
+    dev_script = project_root / "scripts" / "get-next-version.cjs"
+    if dev_script.exists():
+        script_path = dev_script
+    else:
+        # Try to locate script in installed package using importlib.resources
+        try:
+            package = resources.files("python_package_folder")
+            script_resource = package / "scripts" / "get-next-version.cjs"
+            if script_resource.is_file():
+                # For zip/pex installs, use as_file() to extract to temporary file
+                # The context manager keeps the file available during execution
+                try:
+                    # Try direct path conversion first (normal file system install)
+                    script_path_candidate = Path(str(script_resource))
+                    if script_path_candidate.exists():
+                        script_path = script_path_candidate
+                    else:
+                        # Zip/pex install: extract to temporary file
+                        # We'll use as_file() within the subprocess call context
+                        temp_script_file = resources.as_file(script_resource)
+                        script_path = temp_script_file.__enter__()
+                except (TypeError, ValueError, OSError):
+                    # Fallback: try relative to package directory
+                    package_dir = Path(__file__).parent
+                    fallback_script = package_dir / "scripts" / "get-next-version.cjs"
+                    if fallback_script.exists():
+                        script_path = fallback_script
+        except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
+            # Fallback: try relative to package directory
+            package_dir = Path(__file__).parent
+            fallback_script = package_dir / "scripts" / "get-next-version.cjs"
+            if fallback_script.exists():
+                script_path = fallback_script
 
     if not script_path:
         return None
@@ -133,6 +140,13 @@ def resolve_version_via_semantic_release(
             file=sys.stderr,
         )
         return None
+    finally:
+        # Clean up temporary file if we extracted from zip/pex
+        if temp_script_file is not None:
+            try:
+                temp_script_file.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 def main() -> int:
