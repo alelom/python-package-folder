@@ -95,27 +95,42 @@ if (isSubfolderBuild) {
 
 try {
   // Try to require semantic-release
+  // First try resolving from project root (for devDependencies), then fall back to global
   let semanticRelease;
   try {
-    semanticRelease = require('semantic-release');
-  } catch (e) {
-    console.error('Error: semantic-release is not installed.');
-    console.error('Please install it with: npm install -g semantic-release');
-    if (isSubfolderBuild) {
-      console.error('For subfolder builds, also install: npm install -g semantic-release-commit-filter');
+    const semanticReleasePath = require.resolve('semantic-release', { paths: [projectRoot] });
+    semanticRelease = require(semanticReleasePath);
+  } catch (resolveError) {
+    try {
+      semanticRelease = require('semantic-release');
+    } catch (e) {
+      console.error('Error: semantic-release is not installed.');
+      console.error('Please install it with: npm install -g semantic-release');
+      console.error('Or install it as a devDependency: npm install --save-dev semantic-release');
+      if (isSubfolderBuild) {
+        console.error('For subfolder builds, also install: npm install -g semantic-release-commit-filter');
+        console.error('Or as devDependency: npm install --save-dev semantic-release-commit-filter');
+      }
+      process.exit(1);
     }
-    process.exit(1);
   }
 
   // For subfolder builds, require semantic-release-commit-filter
   // (required only to verify it's installed; the plugin is used via options.plugins)
+  // First try resolving from project root (for devDependencies), then fall back to global
   if (isSubfolderBuild) {
     try {
-      require('semantic-release-commit-filter');
-    } catch (e) {
-      console.error('Error: semantic-release-commit-filter is not installed.');
-      console.error('Please install it with: npm install -g semantic-release-commit-filter');
-      process.exit(1);
+      const commitFilterPath = require.resolve('semantic-release-commit-filter', { paths: [projectRoot] });
+      require(commitFilterPath);
+    } catch (resolveError) {
+      try {
+        require('semantic-release-commit-filter');
+      } catch (e) {
+        console.error('Error: semantic-release-commit-filter is not installed.');
+        console.error('Please install it with: npm install -g semantic-release-commit-filter');
+        console.error('Or install it as a devDependency: npm install --save-dev semantic-release-commit-filter');
+        process.exit(1);
+      }
     }
   }
 
