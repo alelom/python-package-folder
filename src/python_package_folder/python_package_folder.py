@@ -241,8 +241,11 @@ def main() -> int:
                 sys.exit(result.returncode)
 
         # Check if building a subfolder (not the main src/)
-        is_subfolder = not src_dir.is_relative_to(project_root / "src") or (
-            src_dir != project_root / "src" and src_dir != project_root
+        # A subfolder must be within the project root but not the main src/ directory
+        is_subfolder = (
+            src_dir.is_relative_to(project_root)
+            and src_dir != project_root / "src"
+            and src_dir != project_root
         )
 
         # Resolve version via semantic-release if not provided and needed
@@ -253,6 +256,7 @@ def main() -> int:
                 print("No --version provided, attempting to resolve via semantic-release...")
                 if is_subfolder:
                     # Workflow 1: subfolder build
+                    # src_dir is guaranteed to be relative to project_root due to is_subfolder check
                     package_name = args.package_name or src_dir.name.replace("_", "-").replace(
                         " ", "-"
                     ).lower().strip("-")
