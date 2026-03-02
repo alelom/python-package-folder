@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch: # Enable manual trigger.
+    inputs:
+      version:
+        description: 'Package version to publish (e.g., 4.0.1). Required for manual triggers.'
+        required: true
+        type: string
 
 jobs:
   build-and-publish:
@@ -57,6 +62,40 @@ jobs:
           # Remove any existing distribution files to prevent publishing test artifacts
           rm -rf dist/
           echo "✓ Cleaned dist/ directory"
+
+      - name: Extract version from release tag or input
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            # Extract from release tag
+            VERSION="${{ github.event.release.tag_name }}"
+            # Strip 'v' prefix if present
+            VERSION="${VERSION#v}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "Extracted version from release tag: $VERSION"
+          else
+            # For workflow_dispatch, use the provided input
+            VERSION="${{ github.event.inputs.version }}"
+            if [ -z "$VERSION" ]; then
+              echo "Error: Version is required for manual workflow_dispatch triggers"
+              exit 1
+            fi
+            # Strip 'v' prefix if present (user might include it)
+            VERSION="${VERSION#v}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "Using version from workflow input: $VERSION"
+          fi
+
+      - name: Set version for release
+        if: steps.version.outputs.version != ''
+        run: |
+          python -c "
+          from pathlib import Path
+          from python_package_folder.version import VersionManager
+          version_manager = VersionManager(project_root=Path('.'))
+          version_manager.set_version('${{ steps.version.outputs.version }}')
+          print(f'✓ Set version to ${{ steps.version.outputs.version }}')
+          "
 
       - name: Build package
         run: uv build
