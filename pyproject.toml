@@ -168,12 +168,14 @@ reportUnreachable = false
 # skip = "foo.py,bar.py"
 
 [tool.pytest.ini_options]
-python_files = ["*.py"]
+python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 testpaths = [
     "src",
     "tests",
 ]
+# Ignore build hooks - they're not test files and require hatchling which isn't in test deps
+ignore = ["_hatch_build.py"]
 norecursedirs = []
 filterwarnings = []
