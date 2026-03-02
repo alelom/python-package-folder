@@ -74,8 +74,11 @@ if (isSubfolderBuild) {
       const existing = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
       if (existing.name !== packageName) {
         // Backup original and update name
+        // Only create backup if one doesn't exist (preserve original from previous runs)
         const backup = packageJsonPath + '.backup';
-        fs.copyFileSync(packageJsonPath, backup);
+        if (!fs.existsSync(backup)) {
+          fs.copyFileSync(packageJsonPath, backup);
+        }
         existing.name = packageName;
         fs.writeFileSync(packageJsonPath, JSON.stringify(existing, null, 2), 'utf8');
         tempPackageJson = packageJsonPath;
