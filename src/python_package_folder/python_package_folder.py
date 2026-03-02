@@ -51,9 +51,23 @@ def resolve_version_via_semantic_release(
         package = resources.files("python_package_folder")
         script_resource = package / "scripts" / "get-next-version.cjs"
         if script_resource.is_file():
-            # Convert Traversable to Path
-            script_paths.append(Path(str(script_resource)))
-    except (ImportError, ModuleNotFoundError, TypeError, AttributeError):
+            # Get the actual file path from the Traversable
+            # For installed packages, this will resolve to the actual file system path
+            try:
+                # Try to get the path directly (works for most cases)
+                script_path = Path(str(script_resource))
+                if script_path.exists():
+                    script_paths.append(script_path)
+            except (TypeError, ValueError):
+                # If direct conversion fails, use as_file context manager
+                # Note: as_file may create a temporary file for zip imports, but the path
+                # remains valid after the context exits (it's a path, not a file handle)
+                extracted_path: Path | None = None
+                with resources.as_file(script_resource) as script_file:
+                    extracted_path = Path(script_file)
+                if extracted_path and extracted_path.exists():
+                    script_paths.append(extracted_path)
+    except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
         # Fallback: try relative to package directory
         package_dir = Path(__file__).parent
         script_paths.append(package_dir / "scripts" / "get-next-version.cjs")
