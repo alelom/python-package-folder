@@ -52,25 +52,23 @@ def resolve_version_via_semantic_release(
         script_resource = package / "scripts" / "get-next-version.cjs"
         if script_resource.is_file():
             # Get the actual file path from the Traversable
-            # For installed packages, this will resolve to the actual file system path
+            # For normal file system installations, this resolves to the actual path
+            # For zip imports, we can't use as_file() here since it creates temporary
+            # files that are deleted when the context exits, so we fall back to
+            # the package directory path instead
             try:
-                # Try to get the path directly (works for most cases)
                 script_path = Path(str(script_resource))
                 if script_path.exists():
                     script_paths.append(script_path)
             except (TypeError, ValueError):
-                # If direct conversion fails, use as_file context manager
-                # Note: as_file may create a temporary file for zip imports, but the path
-                # remains valid after the context exits (it's a path, not a file handle)
-                extracted_path: Path | None = None
-                with resources.as_file(script_resource) as script_file:
-                    extracted_path = Path(script_file)
-                if extracted_path and extracted_path.exists():
-                    script_paths.append(extracted_path)
+                # Direct conversion failed (e.g., zip import), skip and use fallback
+                pass
     except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
-        # Fallback: try relative to package directory
-        package_dir = Path(__file__).parent
-        script_paths.append(package_dir / "scripts" / "get-next-version.cjs")
+        pass
+    
+    # Fallback: try relative to package directory (works for both normal and zip imports)
+    package_dir = Path(__file__).parent
+    script_paths.append(package_dir / "scripts" / "get-next-version.cjs")
     
     script_path = None
     for path in script_paths:
