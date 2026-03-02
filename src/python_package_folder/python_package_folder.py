@@ -101,6 +101,17 @@ def resolve_version_via_semantic_release(
         )
 
         if result.returncode != 0:
+            # Log error details for debugging
+            if result.stderr:
+                print(
+                    f"Warning: semantic-release version resolution failed: {result.stderr}",
+                    file=sys.stderr,
+                )
+            elif result.stdout:
+                print(
+                    f"Warning: semantic-release version resolution failed: {result.stdout}",
+                    file=sys.stderr,
+                )
             return None
 
         version = result.stdout.strip()
@@ -108,7 +119,19 @@ def resolve_version_via_semantic_release(
             return version
 
         return None
-    except Exception:
+    except FileNotFoundError:
+        # Node.js not found
+        print(
+            "Warning: Node.js not found. Cannot resolve version via semantic-release.",
+            file=sys.stderr,
+        )
+        return None
+    except Exception as e:
+        # Other errors (e.g., permission issues, script not found)
+        print(
+            f"Warning: Error resolving version via semantic-release: {e}",
+            file=sys.stderr,
+        )
         return None
 
 
