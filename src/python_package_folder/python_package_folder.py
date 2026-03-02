@@ -14,8 +14,139 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    from importlib import resources
+except ImportError:
+    import importlib_resources as resources  # type: ignore[no-redef]
+
 from .manager import BuildManager
 from .utils import find_project_root, find_source_directory
+
+
+def resolve_version_via_semantic_release(
+    project_root: Path,
+    subfolder_path: Path | None = None,
+    package_name: str | None = None,
+) -> str | None:
+    """
+    Resolve the next version using semantic-release via Node.js script.
+
+    Args:
+        project_root: Root directory of the project
+        subfolder_path: Optional path to subfolder (relative to project_root) for Workflow 1
+        package_name: Optional package name for subfolder builds
+
+    Returns:
+        Version string if a release is determined, None if no release or error
+    """
+    # Try to find the script in multiple locations:
+    # 1. Project root / scripts (for development or when script is in repo)
+    # 2. Package installation directory / scripts (for installed package)
+    #    - For normal installs: direct file path
+    #    - For zip/pex installs: extract to temporary file using as_file()
+
+    # First, try project root (development)
+    dev_script = project_root / "scripts" / "get-next-version.cjs"
+    if dev_script.exists():
+        script_path = dev_script
+        temp_script_context = None
+    else:
+        # Try to locate script in installed package using importlib.resources
+        script_path = None
+        temp_script_context = None
+        try:
+            package = resources.files("python_package_folder")
+            script_resource = package / "scripts" / "get-next-version.cjs"
+            if script_resource.is_file():
+                # Try direct path conversion first (normal file system install)
+                try:
+                    script_path_candidate = Path(str(script_resource))
+                    if script_path_candidate.exists():
+                        script_path = script_path_candidate
+                except (TypeError, ValueError):
+                    pass
+
+                # If direct path didn't work, try as_file() for zip/pex installs
+                if script_path is None:
+                    try:
+                        temp_script_context = resources.as_file(script_resource)
+                        script_path = temp_script_context.__enter__()
+                    except (TypeError, ValueError, OSError):
+                        pass
+        except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
+            pass
+
+        # Fallback: try relative to package directory
+        if script_path is None:
+            package_dir = Path(__file__).parent
+            fallback_script = package_dir / "scripts" / "get-next-version.cjs"
+            if fallback_script.exists():
+                script_path = fallback_script
+
+    if not script_path:
+        return None
+
+    try:
+        # Build command arguments
+        cmd = ["node", str(script_path), str(project_root)]
+        if subfolder_path and package_name:
+            # Workflow 1: subfolder build
+            rel_path = (
+                subfolder_path.relative_to(project_root)
+                if subfolder_path.is_absolute()
+                else subfolder_path
+            )
+            cmd.extend([str(rel_path), package_name])
+        # Workflow 2: main package (no additional args needed)
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            check=False,
+        )
+
+        if result.returncode != 0:
+            # Log error details for debugging
+            if result.stderr:
+                print(
+                    f"Warning: semantic-release version resolution failed: {result.stderr}",
+                    file=sys.stderr,
+                )
+            elif result.stdout:
+                print(
+                    f"Warning: semantic-release version resolution failed: {result.stdout}",
+                    file=sys.stderr,
+                )
+            return None
+
+        version = result.stdout.strip()
+        if version and version != "none":
+            return version
+
+        return None
+    except FileNotFoundError:
+        # Node.js not found
+        print(
+            "Warning: Node.js not found. Cannot resolve version via semantic-release.",
+            file=sys.stderr,
+        )
+        return None
+    except Exception as e:
+        # Other errors (e.g., permission issues, script not found)
+        print(
+            f"Warning: Error resolving version via semantic-release: {e}",
+            file=sys.stderr,
+        )
+        return None
+    finally:
+        # Clean up temporary file if we extracted from zip/pex
+        if temp_script_context is not None:
+            try:
+                temp_script_context.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 def main() -> int:
@@ -77,7 +208,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--version",
-        help="Set a specific version before building (PEP 440 format, e.g., '1.2.3'). Required for subfolder builds.",
+        help="Set a specific version before building (PEP 440 format, e.g., '1.2.3'). Optional: if omitted, version will be resolved via semantic-release when needed.",
     )
     parser.add_argument(
         "--package-name",
@@ -151,18 +282,54 @@ def main() -> int:
                 sys.exit(result.returncode)
 
         # Check if building a subfolder (not the main src/)
-        is_subfolder = not src_dir.is_relative_to(project_root / "src") or (
-            src_dir != project_root / "src" and src_dir != project_root
+        # A subfolder must be within the project root but not the main src/ directory
+        is_subfolder = (
+            src_dir.is_relative_to(project_root)
+            and src_dir != project_root / "src"
+            and src_dir != project_root
         )
 
-        # For subfolder builds, version is required
-        if is_subfolder and not args.version and (not args.analyze_only):
-            print(
-                "Error: --version is required when building from a subfolder.\n"
-                "Subfolders must be built as separate packages with their own version.",
-                file=sys.stderr,
-            )
-            return 1
+        # Resolve version via semantic-release if not provided and needed
+        resolved_version = args.version
+        if not resolved_version and not args.analyze_only:
+            # Version is needed for subfolder builds or when publishing main package
+            if is_subfolder or args.publish:
+                print("No --version provided, attempting to resolve via semantic-release...")
+                if is_subfolder:
+                    # Workflow 1: subfolder build
+                    # src_dir is guaranteed to be relative to project_root due to is_subfolder check
+                    package_name = args.package_name or src_dir.name.replace("_", "-").replace(
+                        " ", "-"
+                    ).lower().strip("-")
+                    subfolder_rel_path = src_dir.relative_to(project_root)
+                    resolved_version = resolve_version_via_semantic_release(
+                        project_root, subfolder_rel_path, package_name
+                    )
+                else:
+                    # Workflow 2: main package
+                    resolved_version = resolve_version_via_semantic_release(project_root)
+
+                if resolved_version:
+                    print(f"Resolved version via semantic-release: {resolved_version}")
+                else:
+                    error_msg = (
+                        "Could not resolve version via semantic-release.\n"
+                        "This could mean:\n"
+                        "  - No release is needed (no relevant commits)\n"
+                        "  - semantic-release is not installed or configured\n"
+                        "  - Node.js is not available\n\n"
+                        "Please either:\n"
+                        "  - Install semantic-release: npm install -g semantic-release"
+                    )
+                    if is_subfolder:
+                        error_msg += "\n  - Install semantic-release-commit-filter: npm install -g semantic-release-commit-filter"
+                    error_msg += "\n  - Or provide --version explicitly"
+                    print(f"Error: {error_msg}", file=sys.stderr)
+                    return 1
+
+        # Use resolved version for the rest of the flow
+        if resolved_version:
+            args.version = resolved_version
 
         if args.publish:
             manager.build_and_publish(
