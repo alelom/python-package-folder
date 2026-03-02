@@ -85,6 +85,8 @@ bump = true
 [tool.hatch.build.targets.wheel]
 # The source location for the package.
 packages = ["src/python_package_folder"]
+# Force-include the scripts directory (non-Python files)
+force-include = { "src/python_package_folder/scripts" = "scripts" }
 
 
 # ---- Settings ----
