@@ -74,17 +74,80 @@ if (isSubfolderBuild) {
     // Read existing package.json and ensure name matches
     try {
       const existing = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+      const backup = packageJsonPath + '.backup';
+      const backupExists = fs.existsSync(backup);
+      
       if (existing.name !== packageName) {
-        // Backup original and update name
-        // Only create backup if one doesn't exist (preserve original from previous runs)
-        const backup = packageJsonPath + '.backup';
-        if (!fs.existsSync(backup)) {
-          fs.copyFileSync(packageJsonPath, backup);
-          backupCreatedByScript = true;
+        // Need to modify the name
+        // Check if backup is stale (from a previous crashed run)
+        // A backup is stale if it contains the same name we're trying to set
+        let isStaleBackup = false;
+        if (backupExists) {
+          try {
+            const backupContent = JSON.parse(fs.readFileSync(backup, 'utf8'));
+            // If backup has the name we're trying to set, it's stale from a previous run
+            if (backupContent.name === packageName) {
+              isStaleBackup = true;
+            }
+          } catch (e) {
+            // If we can't read the backup, treat it as potentially stale
+            isStaleBackup = true;
+          }
         }
-        existing.name = packageName;
-        fs.writeFileSync(packageJsonPath, JSON.stringify(existing, null, 2), 'utf8');
+        
+        // If backup is stale, restore from it first, then create a fresh backup
+        if (isStaleBackup) {
+          try {
+            fs.copyFileSync(backup, packageJsonPath);
+            // Re-read after restoration
+            const restored = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+            // Now create a fresh backup of the restored original
+            fs.copyFileSync(packageJsonPath, backup);
+            backupCreatedByScript = true;
+            // Update the restored content with the new name
+            restored.name = packageName;
+            fs.writeFileSync(packageJsonPath, JSON.stringify(restored, null, 2), 'utf8');
+          } catch (e) {
+            // If restoration fails, create a new backup of current state
+            fs.copyFileSync(packageJsonPath, backup);
+            backupCreatedByScript = true;
+            existing.name = packageName;
+            fs.writeFileSync(packageJsonPath, JSON.stringify(existing, null, 2), 'utf8');
+          }
+        } else {
+          // Backup doesn't exist or is valid (preserves user's original)
+          if (!backupExists) {
+            fs.copyFileSync(packageJsonPath, backup);
+            backupCreatedByScript = true;
+          }
+          existing.name = packageName;
+          fs.writeFileSync(packageJsonPath, JSON.stringify(existing, null, 2), 'utf8');
+        }
         tempPackageJson = packageJsonPath;
+      } else if (backupExists) {
+        // Name already matches, but check if backup is stale
+        // If backup has the same name, it's from a previous crashed run
+        try {
+          const backupContent = JSON.parse(fs.readFileSync(backup, 'utf8'));
+          if (backupContent.name === packageName) {
+            // Stale backup from previous run - restore it
+            fs.copyFileSync(backup, packageJsonPath);
+            // Remove stale backup since we've restored
+            fs.unlinkSync(backup);
+            // Re-check if we need to modify after restoration
+            const restored = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+            if (restored.name !== packageName) {
+              // After restoration, name doesn't match - need to modify
+              fs.copyFileSync(packageJsonPath, backup);
+              backupCreatedByScript = true;
+              restored.name = packageName;
+              fs.writeFileSync(packageJsonPath, JSON.stringify(restored, null, 2), 'utf8');
+              tempPackageJson = packageJsonPath;
+            }
+          }
+        } catch (e) {
+          // If we can't read backup, leave it as-is (might be user's backup)
+        }
       }
     } catch (e) {
       console.error(`Error reading package.json: ${e.message}`);
