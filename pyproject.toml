@@ -85,9 +85,10 @@ bump = true
 [tool.hatch.build.targets.wheel]
 # The source location for the package.
 packages = ["src/python_package_folder"]
-# Force-include the scripts directory (non-Python files)
-# Place scripts inside the package directory so importlib.resources can find them
-force-include = { "src/python_package_folder/scripts" = "python_package_folder/scripts" }
+# Using a build hook to automatically include all files in the scripts directory
+# This avoids duplicates while being sustainable for future file additions
+[tool.hatch.build.hooks.custom]
+path = "src/python_package_folder/_hatch_build.py"
 
 
 # ---- Settings ----
