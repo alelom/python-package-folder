@@ -55,6 +55,9 @@ cd src/api_package
 # Build and publish to TestPyPI with version 1.2.0
 python-package-folder --publish testpypi --version 1.2.0
 
+# Or publish to PyPI with automatic version resolution via semantic-release
+python-package-folder --publish pypi
+
 # Or publish to PyPI with a custom package name
 python-package-folder --publish pypi --version 1.2.0 --package-name "my-api-package"
 
@@ -149,6 +152,13 @@ uv add twine
 
 **For secure credential storage**: `keyring` is optional but recommended (install with `pip install keyring`)
 
+**For automatic version resolution**: When using `--version` optional mode (automatic version resolution via semantic-release), you'll need:
+- Node.js and npm (or npx)
+- semantic-release: `npm install -g semantic-release`
+- For subfolder builds: semantic-release-commit-filter: `npm install -g semantic-release-commit-filter`
+
+Alternatively, install these as devDependencies in your project's `package.json`.
+
 
 ## Quick Start
 
@@ -162,8 +172,12 @@ Useful for monorepos containing many subfolders that may need publishing as stan
 # First cd to the specific subfolder
 cd src/subfolder_to_build_and_publish
 
-# Build and publish any subdirectory of your repo to TestPyPi (https://test.pypi.org/) 
+# Build and publish any subdirectory of your repo to TestPyPi (https://test.pypi.org/)
+# Version can be provided explicitly or resolved automatically via semantic-release
 python-package-folder --publish testpypi --version 0.0.2
+
+# Or let semantic-release determine the next version automatically (requires semantic-release setup)
+python-package-folder --publish testpypi
 
 # Only analyse (no building)
 cd src/subfolder_to_build_and_publish
@@ -437,33 +451,72 @@ The `--version` option:
 **Version Format**: Versions must follow PEP 440 (e.g., `1.2.3`, `1.2.3a1`, `1.2.3.post1`, `1.2.3.dev1`)
 
 
+### Automatic Version Resolution (semantic-release)
+
+When `--version` is not provided, the tool can automatically determine the next version using semantic-release. This requires Node.js, npm, and semantic-release to be installed.
+
+**For subfolder builds (Workflow 1):**
+- Uses per-package tags: `{package-name}-v{version}` (e.g., `my-package-v1.2.3`)
+- Filters commits to only those affecting the subfolder path
+- Requires `semantic-release-commit-filter` plugin
+
+**For main package builds (Workflow 2):**
+- Uses repo-level tags: `v{version}` (e.g., `v1.2.3`)
+- Analyzes all commits in the repository
+
+**Setup:**
+```bash
+# Install semantic-release globally
+npm install -g semantic-release
+
+# For subfolder builds, also install semantic-release-commit-filter
+npm install -g semantic-release-commit-filter
+```
+
+**Usage:**
+```bash
+# Subfolder build - version resolved automatically
+cd src/my_subfolder
+python-package-folder --publish pypi
+
+# Main package - version resolved automatically
+python-package-folder --publish pypi
+```
+
+**Requirements:**
+- Conventional commits (e.g., `fix:`, `feat:`, `BREAKING CHANGE:`) are required for semantic-release to determine version bumps
+- The tool will fall back to requiring `--version` explicitly if semantic-release is not available or determines no release is needed
+
 ### Subfolder Versioning
 
 When building from a subdirectory (not the main `src/` directory), the tool automatically detects the subfolder and sets up the build configuration:
 
 ```bash
-# Build a subfolder as a separate package (version recommended but not required)
+# Build a subfolder as a separate package with explicit version
 cd my_project/subfolder_to_build
 python-package-folder --version "1.0.0" --publish pypi
 
+# Or let semantic-release determine the version automatically
+python-package-folder --publish pypi
+
 # With custom package name
 python-package-folder --version "1.0.0" --package-name "my-custom-name" --publish pypi
-
-# Version defaults to "0.0.0" if not specified (with a warning)
-python-package-folder --publish pypi
 ```
 
 For subfolder builds:
 - **Automatic detection**: The tool automatically detects subfolder builds
+- **Version resolution**: 
+  - If `--version` is provided: Uses the explicit version
+  - If `--version` is omitted: Attempts to resolve via semantic-release (requires setup)
+  - If semantic-release is unavailable or determines no release: Requires `--version` explicitly
 - **pyproject.toml handling**:
   - If `pyproject.toml` exists in subfolder: Uses that file (copied to project root temporarily)
   - If no `pyproject.toml` in subfolder: Creates temporary one with correct package structure
-- **Version**: Recommended but not required when creating temporary pyproject.toml. If not provided, defaults to `0.0.0` with a warning. Ignored if subfolder has its own `pyproject.toml`.
 - **Package name**: Automatically derived from the subfolder name (e.g., `subfolder_to_build` → `subfolder-to-build`). Only used when creating temporary pyproject.toml.
 - **Restoration**: Original `pyproject.toml` is restored after build
 - **Temporary configuration**: Creates a temporary `pyproject.toml` with:
   - Custom package name (from `--package-name` or derived)
-  - Specified version
+  - Specified or resolved version
   - Correct package path for hatchling
   - Dependency group from parent (if `--dependency-group` is specified)
 - **Package initialization**: Automatically creates `__init__.py` if the subfolder doesn't have one (required for hatchling)
@@ -666,7 +719,8 @@ options:
   --password PASSWORD   Password/token for publishing (will prompt if not provided)
   --skip-existing       Skip files that already exist on the repository
   --version VERSION     Set a specific version before building (PEP 440 format).
-                        Required for subfolder builds.
+                        Optional: if omitted, version will be resolved via
+                        semantic-release (requires Node.js and semantic-release setup).
   --package-name PACKAGE_NAME
                         Package name for subfolder builds (default: derived from
                         source directory name)
