@@ -138,7 +138,6 @@ try {
   const options = {
     dryRun: true,
     ci: false,
-    branches: ['main', 'master'], // Default branches, can be overridden by config
   };
 
   // For subfolder builds, configure commit filter and per-package tags
