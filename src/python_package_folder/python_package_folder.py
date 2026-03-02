@@ -45,7 +45,7 @@ def resolve_version_via_semantic_release(
     script_paths: list[Path] = [
         project_root / "scripts" / "get-next-version.cjs",
     ]
-    
+
     # Try to locate script in installed package using importlib.resources
     try:
         package = resources.files("python_package_folder")
@@ -65,17 +65,17 @@ def resolve_version_via_semantic_release(
                 pass
     except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
         pass
-    
+
     # Fallback: try relative to package directory (works for both normal and zip imports)
     package_dir = Path(__file__).parent
     script_paths.append(package_dir / "scripts" / "get-next-version.cjs")
-    
+
     script_path = None
     for path in script_paths:
         if path.exists():
             script_path = path
             break
-    
+
     if not script_path:
         return None
 
@@ -84,7 +84,11 @@ def resolve_version_via_semantic_release(
         cmd = ["node", str(script_path), str(project_root)]
         if subfolder_path and package_name:
             # Workflow 1: subfolder build
-            rel_path = subfolder_path.relative_to(project_root) if subfolder_path.is_absolute() else subfolder_path
+            rel_path = (
+                subfolder_path.relative_to(project_root)
+                if subfolder_path.is_absolute()
+                else subfolder_path
+            )
             cmd.extend([str(rel_path), package_name])
         # Workflow 2: main package (no additional args needed)
 
