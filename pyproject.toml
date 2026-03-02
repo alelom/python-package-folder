@@ -81,6 +81,9 @@ source = "uv-dynamic-versioning"
 vcs = "git"
 style = "pep440"
 bump = true
+# Don't add local version identifiers (commit hash) - PyPI doesn't allow them
+# Local versions are only useful for local development/testing
+local = false
 
 [tool.hatch.build.targets.wheel]
 # The source location for the package.
