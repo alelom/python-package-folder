@@ -55,6 +55,8 @@ if (!fs.existsSync(workingDir)) {
 
 // For subfolder builds, ensure package.json exists with correct name
 let tempPackageJson = null;
+let backupCreatedByScript = false;
+let fileCreatedByScript = false;
 if (isSubfolderBuild) {
   const packageJsonPath = path.join(workingDir, 'package.json');
   const hadPackageJson = fs.existsSync(packageJsonPath);
@@ -67,6 +69,7 @@ if (isSubfolderBuild) {
     }, null, 2);
     fs.writeFileSync(packageJsonPath, packageJsonContent, 'utf8');
     tempPackageJson = packageJsonPath;
+    fileCreatedByScript = true;
   } else {
     // Read existing package.json and ensure name matches
     try {
@@ -77,6 +80,7 @@ if (isSubfolderBuild) {
         const backup = packageJsonPath + '.backup';
         if (!fs.existsSync(backup)) {
           fs.copyFileSync(packageJsonPath, backup);
+          backupCreatedByScript = true;
         }
         existing.name = packageName;
         fs.writeFileSync(packageJsonPath, JSON.stringify(existing, null, 2), 'utf8');
@@ -163,17 +167,19 @@ try {
       GIT_WORK_TREE: projectRoot,
     },
   }).then((result) => {
-    // Clean up temporary package.json if we created it
+    // Clean up temporary package.json if we created or modified it
     if (tempPackageJson && fs.existsSync(tempPackageJson)) {
       const backup = tempPackageJson + '.backup';
-      if (fs.existsSync(backup)) {
-        // Restore original
+      if (backupCreatedByScript && fs.existsSync(backup)) {
+        // Restore original (only if we created the backup)
         fs.copyFileSync(backup, tempPackageJson);
         fs.unlinkSync(backup);
-      } else {
-        // Remove temporary file
+      } else if (fileCreatedByScript) {
+        // Remove temporary file (only if we created it, not if it existed before)
         fs.unlinkSync(tempPackageJson);
       }
+      // If we modified an existing file but didn't create a backup (backup already existed),
+      // leave the file as-is to preserve user's pre-existing backup
     }
 
     // Output result
@@ -188,20 +194,24 @@ try {
     // Clean up temporary package.json on error
     if (tempPackageJson && fs.existsSync(tempPackageJson)) {
       const backup = tempPackageJson + '.backup';
-      if (fs.existsSync(backup)) {
+      if (backupCreatedByScript && fs.existsSync(backup)) {
         try {
+          // Restore original (only if we created the backup)
           fs.copyFileSync(backup, tempPackageJson);
           fs.unlinkSync(backup);
         } catch (e) {
           // Ignore cleanup errors
         }
-      } else {
+      } else if (fileCreatedByScript) {
         try {
+          // Remove temporary file (only if we created it, not if it existed before)
           fs.unlinkSync(tempPackageJson);
         } catch (e) {
           // Ignore cleanup errors
         }
       }
+      // If we modified an existing file but didn't create a backup (backup already existed),
+      // leave the file as-is to preserve user's pre-existing backup
     }
 
     // Check if it's a "no release" case (common, not an error)
@@ -225,20 +235,24 @@ try {
   // Clean up temporary package.json on error
   if (tempPackageJson && fs.existsSync(tempPackageJson)) {
     const backup = tempPackageJson + '.backup';
-    if (fs.existsSync(backup)) {
+    if (backupCreatedByScript && fs.existsSync(backup)) {
       try {
+        // Restore original (only if we created the backup)
         fs.copyFileSync(backup, tempPackageJson);
         fs.unlinkSync(backup);
       } catch (e) {
         // Ignore cleanup errors
       }
-    } else {
+    } else if (fileCreatedByScript) {
       try {
+        // Remove temporary file (only if we created it, not if it existed before)
         fs.unlinkSync(tempPackageJson);
       } catch (e) {
         // Ignore cleanup errors
       }
     }
+    // If we modified an existing file but didn't create a backup (backup already existed),
+    // leave the file as-is to preserve user's pre-existing backup
   }
 
   // Check if it's a "no release" case (common, not an error)
