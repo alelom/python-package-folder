@@ -85,6 +85,8 @@ bump = true
 [tool.hatch.build.targets.wheel]
 # The source location for the package.
 packages = ["src/python_package_folder"]
+# Include scripts directory in package installation
+shared-data = { "scripts" = "scripts" }
 
 
 # ---- Settings ----

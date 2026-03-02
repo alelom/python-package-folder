@@ -14,6 +14,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    from importlib import resources
+except ImportError:
+    import importlib_resources as resources  # type: ignore[no-redef]
+
 from .manager import BuildManager
 from .utils import find_project_root, find_source_directory
 
@@ -37,10 +42,21 @@ def resolve_version_via_semantic_release(
     # Try to find the script in multiple locations:
     # 1. Project root / scripts (for development or when script is in repo)
     # 2. Package installation directory / scripts (for installed package)
-    script_paths = [
+    script_paths: list[Path] = [
         project_root / "scripts" / "get-next-version.cjs",
-        Path(__file__).parent.parent.parent / "scripts" / "get-next-version.cjs",
     ]
+    
+    # Try to locate script in installed package using importlib.resources
+    try:
+        package = resources.files("python_package_folder")
+        script_resource = package / "scripts" / "get-next-version.cjs"
+        if script_resource.is_file():
+            # Convert Traversable to Path
+            script_paths.append(Path(str(script_resource)))
+    except (ImportError, ModuleNotFoundError, TypeError, AttributeError):
+        # Fallback: try relative to package directory
+        package_dir = Path(__file__).parent
+        script_paths.append(package_dir / "scripts" / "get-next-version.cjs")
     
     script_path = None
     for path in script_paths:
