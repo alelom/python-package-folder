@@ -35,6 +35,13 @@ const projectRoot = path.resolve(args[0]);
 const subfolderPath = args[1] || null;
 const packageName = args[2] || null;
 
+// Validate argument combination: both-or-neither for subfolder builds
+if ((subfolderPath !== null && packageName === null) || (subfolderPath === null && packageName !== null)) {
+  console.error('Error: subfolder_path and package_name must be provided together (both or neither).');
+  console.error('Usage: node get-next-version.cjs <project_root> [subfolder_path] [package_name]');
+  process.exit(1);
+}
+
 // Check if project root exists
 if (!fs.existsSync(projectRoot)) {
   console.error(`Error: Project root does not exist: ${projectRoot}`);
@@ -57,6 +64,7 @@ if (!fs.existsSync(workingDir)) {
 let tempPackageJson = null;
 let backupCreatedByScript = false;
 let fileCreatedByScript = false;
+let originalPackageJsonContent = null; // Track original content for restoration
 if (isSubfolderBuild) {
   const packageJsonPath = path.join(workingDir, 'package.json');
   const hadPackageJson = fs.existsSync(packageJsonPath);
@@ -76,6 +84,9 @@ if (isSubfolderBuild) {
       const existing = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
       const backup = packageJsonPath + '.backup';
       const backupExists = fs.existsSync(backup);
+      
+      // Store original content before any modifications
+      originalPackageJsonContent = fs.readFileSync(packageJsonPath, 'utf8');
       
       if (existing.name !== packageName) {
         // Need to modify the name
@@ -99,8 +110,9 @@ if (isSubfolderBuild) {
         if (isStaleBackup) {
           try {
             fs.copyFileSync(backup, packageJsonPath);
-            // Re-read after restoration
-            const restored = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+            // Re-read after restoration and update original content
+            originalPackageJsonContent = fs.readFileSync(packageJsonPath, 'utf8');
+            const restored = JSON.parse(originalPackageJsonContent);
             // Now create a fresh backup of the restored original
             fs.copyFileSync(packageJsonPath, backup);
             backupCreatedByScript = true;
@@ -116,10 +128,13 @@ if (isSubfolderBuild) {
           }
         } else {
           // Backup doesn't exist or is valid (preserves user's original)
+          // If backup exists, it's user's backup - we'll restore from originalPackageJsonContent
+          // If backup doesn't exist, create one
           if (!backupExists) {
             fs.copyFileSync(packageJsonPath, backup);
             backupCreatedByScript = true;
           }
+          // Modify the file
           existing.name = packageName;
           fs.writeFileSync(packageJsonPath, JSON.stringify(existing, null, 2), 'utf8');
         }
@@ -132,6 +147,8 @@ if (isSubfolderBuild) {
           if (backupContent.name === packageName) {
             // Stale backup from previous run - restore it
             fs.copyFileSync(backup, packageJsonPath);
+            // Update original content after restoration
+            originalPackageJsonContent = fs.readFileSync(packageJsonPath, 'utf8');
             // Remove stale backup since we've restored
             fs.unlinkSync(backup);
             // Re-check if we need to modify after restoration
@@ -255,9 +272,11 @@ try {
       } else if (fileCreatedByScript) {
         // Remove temporary file (only if we created it, not if it existed before)
         fs.unlinkSync(tempPackageJson);
+      } else if (originalPackageJsonContent !== null) {
+        // We modified an existing file but didn't create a backup (user's backup exists)
+        // Restore from the original content we stored, but don't delete user's backup
+        fs.writeFileSync(tempPackageJson, originalPackageJsonContent, 'utf8');
       }
-      // If we modified an existing file but didn't create a backup (backup already existed),
-      // leave the file as-is to preserve user's pre-existing backup
     }
 
     // Output result
@@ -287,9 +306,15 @@ try {
         } catch (e) {
           // Ignore cleanup errors
         }
+      } else if (originalPackageJsonContent !== null) {
+        // We modified an existing file but didn't create a backup (user's backup exists)
+        // Restore from the original content we stored, but don't delete user's backup
+        try {
+          fs.writeFileSync(tempPackageJson, originalPackageJsonContent, 'utf8');
+        } catch (e) {
+          // Ignore cleanup errors
+        }
       }
-      // If we modified an existing file but didn't create a backup (backup already existed),
-      // leave the file as-is to preserve user's pre-existing backup
     }
 
     // Check if it's a "no release" case (common, not an error)
@@ -328,9 +353,15 @@ try {
       } catch (e) {
         // Ignore cleanup errors
       }
+    } else if (originalPackageJsonContent !== null) {
+      // We modified an existing file but didn't create a backup (user's backup exists)
+      // Restore from the original content we stored, but don't delete user's backup
+      try {
+        fs.writeFileSync(tempPackageJson, originalPackageJsonContent, 'utf8');
+      } catch (e) {
+        // Ignore cleanup errors
+      }
     }
-    // If we modified an existing file but didn't create a backup (backup already existed),
-    // leave the file as-is to preserve user's pre-existing backup
   }
 
   // Check if it's a "no release" case (common, not an error)
