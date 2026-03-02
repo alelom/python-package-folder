@@ -108,10 +108,10 @@ try {
   }
 
   // For subfolder builds, require semantic-release-commit-filter
-  let commitFilter;
+  // (required only to verify it's installed; the plugin is used via options.plugins)
   if (isSubfolderBuild) {
     try {
-      commitFilter = require('semantic-release-commit-filter');
+      require('semantic-release-commit-filter');
     } catch (e) {
       console.error('Error: semantic-release-commit-filter is not installed.');
       console.error('Please install it with: npm install -g semantic-release-commit-filter');
