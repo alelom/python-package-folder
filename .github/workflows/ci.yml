@@ -59,6 +59,10 @@ jobs:
       - name: Run linting
         run: uv run ruff check .
 
+      - name: Check formatting
+        continue-on-error: true
+        run: uv run ruff format --check .
+
       - name: Run type checking
         run: uv run basedpyright src/ || true
 
