@@ -74,10 +74,24 @@ if (!fs.existsSync(workingDir)) {
 
 // For subfolder builds, ensure package.json exists with correct name
 let tempPackageJson = null;
+let tempProjectRootPackageJson = null; // Track project root package.json if we create it
 let backupCreatedByScript = false;
 let fileCreatedByScript = false;
 let originalPackageJsonContent = null; // Track original content for restoration
 if (isSubfolderBuild) {
+  // First, ensure package.json exists at project root (semantic-release-commit-filter may need it)
+  const projectRootPackageJson = path.join(projectRoot, 'package.json');
+  if (!fs.existsSync(projectRootPackageJson)) {
+    // Create minimal package.json at project root
+    const rootPackageJsonContent = JSON.stringify({
+      name: path.basename(projectRoot),
+      version: '0.0.0'
+    }, null, 2);
+    fs.writeFileSync(projectRootPackageJson, rootPackageJsonContent, 'utf8');
+    tempProjectRootPackageJson = projectRootPackageJson;
+  }
+  
+  // Then, ensure package.json exists in subfolder
   const packageJsonPath = path.join(workingDir, 'package.json');
   const hadPackageJson = fs.existsSync(packageJsonPath);
   
@@ -525,6 +539,11 @@ function getGlobalNpmPaths() {
         fs.writeFileSync(tempPackageJson, originalPackageJsonContent, 'utf8');
       }
     }
+    
+    // Clean up project root package.json if we created it
+    if (tempProjectRootPackageJson && fs.existsSync(tempProjectRootPackageJson)) {
+      fs.unlinkSync(tempProjectRootPackageJson);
+    }
 
     // Output result
     if (result && result.nextRelease && result.nextRelease.version) {
@@ -561,6 +580,15 @@ function getGlobalNpmPaths() {
         } catch (e) {
           // Ignore cleanup errors
         }
+      }
+    }
+    
+    // Clean up project root package.json if we created it
+    if (tempProjectRootPackageJson && fs.existsSync(tempProjectRootPackageJson)) {
+      try {
+        fs.unlinkSync(tempProjectRootPackageJson);
+      } catch (e) {
+        // Ignore cleanup errors
       }
     }
 
@@ -608,6 +636,15 @@ function getGlobalNpmPaths() {
         } catch (e) {
           // Ignore cleanup errors
         }
+      }
+    }
+    
+    // Clean up project root package.json if we created it
+    if (tempProjectRootPackageJson && fs.existsSync(tempProjectRootPackageJson)) {
+      try {
+        fs.unlinkSync(tempProjectRootPackageJson);
+      } catch (e) {
+        // Ignore cleanup errors
       }
     }
 
