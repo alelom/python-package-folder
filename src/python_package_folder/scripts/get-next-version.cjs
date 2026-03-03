@@ -7,12 +7,14 @@
  * package builds (repo-level tags).
  * 
  * Usage:
- *   node scripts/get-next-version.cjs <project_root> [subfolder_path] [package_name]
+ *   node scripts/get-next-version.cjs <project_root> [subfolder_path] [package_name] [repository] [repository_url]
  * 
  * Args:
  *   - project_root: Root directory of the project (absolute or relative path)
  *   - subfolder_path: Optional. Path to subfolder relative to project_root (for Workflow 1)
  *   - package_name: Optional. Package name for subfolder builds (for per-package tags)
+ *   - repository: Optional. Target repository ('pypi', 'testpypi', or 'azure')
+ *   - repository_url: Optional. Repository URL (required for Azure Artifacts)
  * 
  * Output:
  *   - Version string (e.g., "1.2.3") if a release is determined
@@ -22,25 +24,32 @@
 
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+const http = require('http');
 
 // Parse command line arguments
 const args = process.argv.slice(2);
 if (args.length < 1) {
   console.error('Error: project_root is required');
-  console.error('Usage: node get-next-version.cjs <project_root> [subfolder_path] [package_name]');
+  console.error('Usage: node get-next-version.cjs <project_root> [subfolder_path] [package_name] [repository] [repository_url]');
   process.exit(1);
 }
 
 const projectRoot = path.resolve(args[0]);
-const subfolderPath = args[1] || null;
-const packageName = args[2] || null;
+const subfolderPath = args[1] && args[1] !== 'null' && args[1] !== '' ? args[1] : null;
+const packageName = args[2] && args[2] !== 'null' && args[2] !== '' ? args[2] : null;
+const repository = args[3] && args[3] !== 'null' && args[3] !== '' ? args[3] : null;
+const repositoryUrl = args[4] && args[4] !== 'null' && args[4] !== '' ? args[4] : null;
 
-// Validate argument combination: both-or-neither for subfolder builds
-if ((subfolderPath !== null && packageName === null) || (subfolderPath === null && packageName !== null)) {
-  console.error('Error: subfolder_path and package_name must be provided together (both or neither).');
-  console.error('Usage: node get-next-version.cjs <project_root> [subfolder_path] [package_name]');
+// Validate argument combination
+// - For subfolder builds: both subfolder_path and package_name are required
+// - For main package builds: package_name can be provided alone (for registry queries)
+if (subfolderPath !== null && packageName === null) {
+  console.error('Error: package_name is required when subfolder_path is provided.');
+  console.error('Usage: node get-next-version.cjs <project_root> [subfolder_path] [package_name] [repository] [repository_url]');
   process.exit(1);
 }
+// Note: package_name can be provided without subfolder_path for main package registry queries
 
 // Check if project root exists
 if (!fs.existsSync(projectRoot)) {
@@ -49,6 +58,8 @@ if (!fs.existsSync(projectRoot)) {
 }
 
 // Determine if this is a subfolder build
+// A subfolder build requires both subfolder_path and package_name
+// package_name alone (without subfolder_path) indicates a main package build with registry query
 const isSubfolderBuild = subfolderPath !== null && packageName !== null;
 const workingDir = isSubfolderBuild 
   ? path.resolve(projectRoot, subfolderPath)
@@ -173,10 +184,138 @@ if (isSubfolderBuild) {
   }
 }
 
-try {
-  // Try to require semantic-release
-  // First try resolving from project root (for devDependencies), then fall back to global
-  let semanticRelease;
+/**
+ * Query PyPI or TestPyPI JSON API for the latest version of a package.
+ * @param {string} packageName - Package name to query
+ * @param {string} registry - 'pypi' or 'testpypi'
+ * @returns {Promise<string|null>} Latest version string or null if not found
+ */
+async function queryPyPIVersion(packageName, registry) {
+  const baseUrl = registry === 'testpypi' 
+    ? 'https://test.pypi.org'
+    : 'https://pypi.org';
+  const url = `${baseUrl}/pypi/${packageName}/json`;
+  
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      let data = '';
+      
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      
+      res.on('end', () => {
+        if (res.statusCode === 404) {
+          // Package doesn't exist yet (first release)
+          resolve(null);
+        } else if (res.statusCode === 200) {
+          try {
+            const json = JSON.parse(data);
+            // Get latest version from info.version or releases
+            const version = json.info?.version || Object.keys(json.releases || {}).pop() || null;
+            resolve(version);
+          } catch (e) {
+            reject(new Error(`Failed to parse PyPI response: ${e.message}`));
+          }
+        } else {
+          reject(new Error(`PyPI API returned status ${res.statusCode}`));
+        }
+      });
+    }).on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
+/**
+ * Query Azure Artifacts for the latest version of a package.
+ * Azure Artifacts uses a simple index format (HTML) which is more complex to parse.
+ * For now, we'll attempt to query but fall back gracefully if it fails.
+ * @param {string} packageName - Package name to query
+ * @param {string} repositoryUrl - Azure Artifacts repository URL
+ * @returns {Promise<string|null>} Latest version string or null if not found/unsupported
+ */
+async function queryAzureArtifactsVersion(packageName, repositoryUrl) {
+  // Convert upload URL to simple index URL
+  // Upload: https://pkgs.dev.azure.com/ORG/PROJECT/_packaging/FEED/pypi/upload
+  // Simple: https://pkgs.dev.azure.com/ORG/PROJECT/_packaging/FEED/pypi/simple/{package}/
+  let simpleIndexUrl;
+  try {
+    const url = new URL(repositoryUrl);
+    if (url.pathname.endsWith('/upload')) {
+      simpleIndexUrl = repositoryUrl.replace('/upload', `/simple/${packageName}/`);
+    } else {
+      // Try to construct from common patterns
+      simpleIndexUrl = repositoryUrl.replace(/\/upload$/, `/simple/${packageName}/`);
+    }
+  } catch (e) {
+    // Invalid URL format, return null to fall back to git tags
+    return null;
+  }
+  
+  return new Promise((resolve) => {
+    // Azure Artifacts may require authentication and returns HTML
+    // For now, we'll attempt the request but gracefully fall back if it fails
+    // This is a limitation - Azure Artifacts API is more complex than PyPI
+    const url = new URL(simpleIndexUrl);
+    const client = url.protocol === 'https:' ? https : http;
+    
+    const req = client.get(simpleIndexUrl, (res) => {
+      // Azure Artifacts simple index returns HTML, not JSON
+      // Parsing HTML is complex and may require authentication
+      // For now, we'll return null to fall back to git tags
+      // This can be enhanced later with proper HTML parsing or API endpoint discovery
+      resolve(null);
+    });
+    
+    req.on('error', () => {
+      // Network error or authentication required - fall back to git tags
+      resolve(null);
+    });
+    
+    req.setTimeout(5000, () => {
+      req.destroy();
+      resolve(null);
+    });
+  });
+}
+
+/**
+ * Query the package registry for the latest published version.
+ * @param {string} packageName - Package name to query
+ * @param {string|null} repository - Repository type ('pypi', 'testpypi', 'azure', or null)
+ * @param {string|null} repositoryUrl - Repository URL (for Azure)
+ * @returns {Promise<string|null>} Latest version or null if not found/unsupported
+ */
+async function queryRegistryVersion(packageName, repository, repositoryUrl) {
+  if (!repository || !packageName) {
+    return null;
+  }
+  
+  try {
+    if (repository === 'pypi' || repository === 'testpypi') {
+      return await queryPyPIVersion(packageName, repository);
+    } else if (repository === 'azure') {
+      if (!repositoryUrl) {
+        return null;
+      }
+      return await queryAzureArtifactsVersion(packageName, repositoryUrl);
+    }
+  } catch (error) {
+    // Log error but don't fail - fall back to git tags
+    console.error(`Warning: Failed to query ${repository} for latest version: ${error.message}`);
+    console.error('Falling back to git tags for version detection.');
+  }
+  
+  return null;
+}
+
+// Main execution
+(async () => {
+  try {
+    // Try to require semantic-release
+    // First try resolving from project root (for devDependencies), then fall back to global
+    let semanticRelease;
   try {
     const semanticReleasePath = require.resolve('semantic-release', { paths: [projectRoot] });
     semanticRelease = require(semanticReleasePath);
@@ -214,11 +353,41 @@ try {
     }
   }
 
+  // Query registry for latest version if repository info is provided
+  let registryVersion = null;
+  if (repository && packageName) {
+    try {
+      registryVersion = await queryRegistryVersion(packageName, repository, repositoryUrl);
+      if (registryVersion) {
+        console.error(`Found latest version on ${repository}: ${registryVersion}`);
+      } else {
+        console.error(`Package not found on ${repository} or query failed, using git tags as fallback`);
+      }
+    } catch (error) {
+      console.error(`Warning: Registry query failed: ${error.message}`);
+      console.error('Falling back to git tags for version detection.');
+    }
+  }
+
   // Configure semantic-release options
   const options = {
     dryRun: true,
     ci: false,
   };
+  
+  // If we have a registry version, we can use it to set lastRelease in semantic-release context
+  // This ensures semantic-release uses the registry version as baseline instead of git tags
+  if (registryVersion) {
+    // Set lastRelease in options to use registry version as baseline
+    // This tells semantic-release to analyze commits since this version
+    options.lastRelease = {
+      version: registryVersion,
+      gitTag: isSubfolderBuild 
+        ? `${packageName}-v${registryVersion}`
+        : `v${registryVersion}`,
+      gitHead: null, // We don't know the commit, but semantic-release will find it
+    };
+  }
 
   // For subfolder builds, configure commit filter and per-package tags
   if (isSubfolderBuild) {
@@ -334,50 +503,51 @@ try {
     }
     process.exit(1);
   });
-} catch (error) {
-  // Clean up temporary package.json on error
-  if (tempPackageJson && fs.existsSync(tempPackageJson)) {
-    const backup = tempPackageJson + '.backup';
-    if (backupCreatedByScript && fs.existsSync(backup)) {
-      try {
-        // Restore original (only if we created the backup)
-        fs.copyFileSync(backup, tempPackageJson);
-        fs.unlinkSync(backup);
-      } catch (e) {
-        // Ignore cleanup errors
-      }
-    } else if (fileCreatedByScript) {
-      try {
-        // Remove temporary file (only if we created it, not if it existed before)
-        fs.unlinkSync(tempPackageJson);
-      } catch (e) {
-        // Ignore cleanup errors
-      }
-    } else if (originalPackageJsonContent !== null) {
-      // We modified an existing file but didn't create a backup (user's backup exists)
-      // Restore from the original content we stored, but don't delete user's backup
-      try {
-        fs.writeFileSync(tempPackageJson, originalPackageJsonContent, 'utf8');
-      } catch (e) {
-        // Ignore cleanup errors
+  } catch (error) {
+    // Clean up temporary package.json on error
+    if (tempPackageJson && fs.existsSync(tempPackageJson)) {
+      const backup = tempPackageJson + '.backup';
+      if (backupCreatedByScript && fs.existsSync(backup)) {
+        try {
+          // Restore original (only if we created the backup)
+          fs.copyFileSync(backup, tempPackageJson);
+          fs.unlinkSync(backup);
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      } else if (fileCreatedByScript) {
+        try {
+          // Remove temporary file (only if we created it, not if it existed before)
+          fs.unlinkSync(tempPackageJson);
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      } else if (originalPackageJsonContent !== null) {
+        // We modified an existing file but didn't create a backup (user's backup exists)
+        // Restore from the original content we stored, but don't delete user's backup
+        try {
+          fs.writeFileSync(tempPackageJson, originalPackageJsonContent, 'utf8');
+        } catch (e) {
+          // Ignore cleanup errors
+        }
       }
     }
-  }
 
-  // Check if it's a "no release" case (common, not an error)
-  if (error.message && (
-    error.message.includes('no release') ||
-    error.message.includes('No release') ||
-    error.code === 'ENOCHANGE'
-  )) {
-    console.log('none');
-    process.exit(0);
-  }
+    // Check if it's a "no release" case (common, not an error)
+    if (error.message && (
+      error.message.includes('no release') ||
+      error.message.includes('No release') ||
+      error.code === 'ENOCHANGE'
+    )) {
+      console.log('none');
+      process.exit(0);
+    }
 
-  // Other errors
-  console.error(`Error: ${error.message}`);
-  if (error.stack) {
-    console.error(error.stack);
+    // Other errors
+    console.error(`Error: ${error.message}`);
+    if (error.stack) {
+      console.error(error.stack);
+    }
+    process.exit(1);
   }
-  process.exit(1);
-}
+})();

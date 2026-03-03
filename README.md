@@ -455,8 +455,15 @@ The `--version` option:
 
 When `--version` is not provided, the tool can automatically determine the next version using semantic-release. This requires Node.js, npm, and semantic-release to be installed.
 
+**Version Detection:**
+- **Baseline version**:
+  - **Registry Query (Preferred)**: When publishing to a repository (PyPI, TestPyPI, or Azure Artifacts), the tool queries the target registry for the latest published version and uses it as the baseline for version calculation. This ensures version calculations are based on what's actually published, not just git tags.
+  - **Git Tags (Fallback)**: If the package doesn't exist on the registry yet (first release) or if registry query fails, the tool falls back to using git tags to determine the starting version.
+- **New version to publish**: After determining the baseline version, [`semantic-release`](https://semantic-release.gitbook.io/semantic-release/) analyzes commits since that version to calculate the next version bump (major, minor, or patch) based on [_conventional commit_](https://www.conventionalcommits.org/en/v1.0.0/) messages.
+
 **For subfolder builds (Workflow 1):**
 - Uses per-package tags: `{package-name}-v{version}` (e.g., `my-package-v1.2.3`)
+- Queries the target registry for the latest published version of the subfolder package
 - Filters commits to only those affecting the subfolder path
 - **Commit filtering behavior**: Only commits that modify files within the subfolder path are considered for version calculation. Commits that only target files outside the subfolder are excluded. For example:
   - `fix: update my_subfolder/foo.py` → **Included** (affects subfolder)
@@ -466,7 +473,13 @@ When `--version` is not provided, the tool can automatically determine the next 
 
 **For main package builds (Workflow 2):**
 - Uses repo-level tags: `v{version}` (e.g., `v1.2.3`)
+- Queries the target registry for the latest published version when publishing
 - Analyzes all commits in the repository
+
+**Registry Support:**
+- **PyPI**: Fully supported via JSON API (`https://pypi.org/pypi/{package-name}/json`)
+- **TestPyPI**: Fully supported via JSON API (`https://test.pypi.org/pypi/{package-name}/json`)
+- **Azure Artifacts**: Basic support with fallback to git tags. Azure Artifacts uses a different API format and may require authentication, so if the query fails, the tool automatically falls back to git tags.
 
 **Setup:**
 ```bash

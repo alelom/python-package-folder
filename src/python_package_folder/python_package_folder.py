@@ -27,6 +27,8 @@ def resolve_version_via_semantic_release(
     project_root: Path,
     subfolder_path: Path | None = None,
     package_name: str | None = None,
+    repository: str | None = None,
+    repository_url: str | None = None,
 ) -> str | None:
     """
     Resolve the next version using semantic-release via Node.js script.
@@ -35,6 +37,8 @@ def resolve_version_via_semantic_release(
         project_root: Root directory of the project
         subfolder_path: Optional path to subfolder (relative to project_root) for Workflow 1
         package_name: Optional package name for subfolder builds
+        repository: Optional target repository ('pypi', 'testpypi', or 'azure')
+        repository_url: Optional repository URL (required for Azure Artifacts)
 
     Returns:
         Version string if a release is determined, None if no release or error
@@ -98,7 +102,17 @@ def resolve_version_via_semantic_release(
                 else subfolder_path
             )
             cmd.extend([str(rel_path), package_name])
-        # Workflow 2: main package (no additional args needed)
+        elif package_name:
+            # Main package build with package_name (for registry queries)
+            # Pass null for subfolder_path, then package_name
+            cmd.extend(["", package_name])
+        # Workflow 2: main package without package_name (no additional args needed)
+        
+        # Add repository information if provided
+        if repository:
+            cmd.append(repository)
+            if repository_url:
+                cmd.append(repository_url)
 
         result = subprocess.run(
             cmd,
@@ -297,6 +311,10 @@ def main() -> int:
             # Version is needed for subfolder builds or when publishing main package
             if is_subfolder or args.publish:
                 print("No --version provided, attempting to resolve via semantic-release...")
+                # Get repository info if publishing
+                repository = args.publish if args.publish else None
+                repository_url = args.repository_url if args.publish else None
+                
                 if is_subfolder:
                     # Workflow 1: subfolder build
                     # src_dir is guaranteed to be relative to project_root due to is_subfolder check
@@ -305,11 +323,34 @@ def main() -> int:
                     ).lower().strip("-")
                     subfolder_rel_path = src_dir.relative_to(project_root)
                     resolved_version = resolve_version_via_semantic_release(
-                        project_root, subfolder_rel_path, package_name
+                        project_root,
+                        subfolder_rel_path,
+                        package_name,
+                        repository=repository,
+                        repository_url=repository_url,
                     )
                 else:
                     # Workflow 2: main package
-                    resolved_version = resolve_version_via_semantic_release(project_root)
+                    # For main package, we need package_name from pyproject.toml for registry queries
+                    package_name_for_registry = None
+                    if repository:
+                        try:
+                            import tomllib
+                            pyproject_path = project_root / "pyproject.toml"
+                            if pyproject_path.exists():
+                                with open(pyproject_path, "rb") as f:
+                                    data = tomllib.load(f)
+                                    package_name_for_registry = data.get("project", {}).get("name")
+                        except Exception:
+                            pass
+                    
+                    resolved_version = resolve_version_via_semantic_release(
+                        project_root,
+                        subfolder_path=None,
+                        package_name=package_name_for_registry,
+                        repository=repository,
+                        repository_url=repository_url,
+                    )
 
                 if resolved_version:
                     print(f"Resolved version via semantic-release: {resolved_version}")
