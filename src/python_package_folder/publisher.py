@@ -310,11 +310,59 @@ class Publisher:
         print(f"Files to upload: {len(dist_files)}")
 
         try:
-            subprocess.run(cmd, check=True, text=True)
+            result = subprocess.run(
+                cmd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            # Print twine output if available
+            if result.stdout:
+                print(result.stdout)
+            if result.stderr:
+                print(result.stderr, file=sys.stderr)
             print(f"\n✓ Successfully published to {self.repository.value}")
         except subprocess.CalledProcessError as e:
             print(f"\n✗ Failed to publish to {self.repository.value}", file=sys.stderr)
-            print(f"Error: {e}", file=sys.stderr)
+            
+            # Extract and display twine's actual error message
+            error_details = []
+            if e.stdout:
+                error_details.append(f"stdout: {e.stdout}")
+            if e.stderr:
+                error_details.append(f"stderr: {e.stderr}")
+            if e.returncode is not None:
+                error_details.append(f"exit code: {e.returncode}")
+            
+            if error_details:
+                print("Twine error details:", file=sys.stderr)
+                for detail in error_details:
+                    print(f"  {detail}", file=sys.stderr)
+            else:
+                # Fallback to generic error if no output captured
+                print(f"Command failed: {' '.join(cmd)}", file=sys.stderr)
+                print(f"Return code: {e.returncode}", file=sys.stderr)
+            
+            # Provide helpful hints based on common errors
+            if e.returncode == 1:
+                if e.stderr and ("already exists" in e.stderr.lower() or "409" in e.stderr or "conflict" in e.stderr.lower()):
+                    print(
+                        "\nHint: This version may already exist on the repository. "
+                        "Use --skip-existing to skip files that already exist, "
+                        "or publish a new version.",
+                        file=sys.stderr,
+                    )
+                elif e.stderr and ("401" in e.stderr or "unauthorized" in e.stderr.lower()):
+                    print(
+                        "\nHint: Authentication failed. Check your credentials.",
+                        file=sys.stderr,
+                    )
+                elif e.stderr and ("403" in e.stderr or "forbidden" in e.stderr.lower()):
+                    print(
+                        "\nHint: Access forbidden. Check your permissions for this repository.",
+                        file=sys.stderr,
+                    )
+            
             raise
 
     def publish_interactive(self, skip_existing: bool = False) -> None:

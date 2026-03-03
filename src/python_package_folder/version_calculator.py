@@ -120,6 +120,7 @@ class SimpleIndexParser(HTMLParser):
         self.versions: set[str] = set()
         self.in_anchor = False
         self.current_href = ""
+        self.links_processed = 0
     
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "a":
@@ -134,17 +135,24 @@ class SimpleIndexParser(HTMLParser):
         if self.in_anchor:
             # Extract version from link text or href
             # Format: package-name-version-... or package-name-version.tar.gz
-            version = self._extract_version_from_filename(data.strip())
-            if version:
-                self.versions.add(version)
+            link_text = data.strip()
+            if link_text:
+                logger.debug(f"Processing link text: '{link_text}'")
+                version = self._extract_version_from_filename(link_text)
+                if version:
+                    logger.debug(f"Extracted version '{version}' from link text: '{link_text}'")
+                    self.versions.add(version)
             # Also check href if it contains version info
             if self.current_href:
+                logger.debug(f"Processing href: '{self.current_href}'")
                 version = self._extract_version_from_filename(self.current_href)
                 if version:
+                    logger.debug(f"Extracted version '{version}' from href: '{self.current_href}'")
                     self.versions.add(version)
     
     def handle_endtag(self, tag: str) -> None:
         if tag == "a":
+            self.links_processed += 1
             self.in_anchor = False
             self.current_href = ""
     
@@ -198,60 +206,107 @@ def _query_azure_artifacts_version(
             simple_index_url = repository_url.replace("/upload", f"/simple/{package_name}/")
         else:
             simple_index_url = repository_url.rstrip("/") + f"/simple/{package_name}/"
-        logger.debug(f"Constructed Azure Artifacts simple index URL: {simple_index_url}")
+        logger.info(f"Constructed Azure Artifacts simple index URL: {simple_index_url}")
     except Exception as e:
         logger.warning(f"Error constructing Azure Artifacts URL for '{package_name}': {e}")
         return None
 
     try:
+        logger.info(f"Fetching Azure Artifacts simple index for '{package_name}'...")
         response = requests.get(simple_index_url, timeout=10)
-        logger.debug(f"Azure Artifacts response status: {response.status_code}")
+        logger.info(f"Azure Artifacts response: status={response.status_code}, content_length={len(response.text)} bytes")
         
         if response.status_code == 401:
-            logger.warning(f"Authentication required for Azure Artifacts (401). Package '{package_name}' may require authentication to query.")
+            logger.warning(
+                f"Authentication required for Azure Artifacts (401). "
+                f"Package '{package_name}' may require authentication to query. "
+                f"URL: {simple_index_url}"
+            )
             return None
         elif response.status_code == 403:
-            logger.warning(f"Access forbidden for Azure Artifacts (403). Package '{package_name}' may not be accessible or requires different permissions.")
+            logger.warning(
+                f"Access forbidden for Azure Artifacts (403). "
+                f"Package '{package_name}' may not be accessible or requires different permissions. "
+                f"URL: {simple_index_url}"
+            )
             return None
         elif response.status_code == 404:
-            logger.debug(f"Package '{package_name}' not found on Azure Artifacts (404) - first release")
+            logger.info(
+                f"Package '{package_name}' not found on Azure Artifacts (404) - this appears to be the first release. "
+                f"URL: {simple_index_url}"
+            )
             return None
         elif response.status_code != 200:
-            logger.warning(f"Unexpected status code {response.status_code} from Azure Artifacts for '{package_name}'")
+            logger.warning(
+                f"Unexpected status code {response.status_code} from Azure Artifacts for '{package_name}'. "
+                f"URL: {simple_index_url}, Response preview: {response.text[:200]}"
+            )
             return None
         
         # Parse HTML to extract versions
+        logger.info(f"Parsing HTML response to extract versions for '{package_name}'...")
         parser = SimpleIndexParser(package_name)
         try:
             parser.feed(response.text)
+            logger.info(
+                f"HTML parsing completed: processed {parser.links_processed} link(s), "
+                f"found {len(parser.versions)} unique version(s)"
+            )
         except Exception as e:
-            logger.warning(f"Error parsing Azure Artifacts HTML for '{package_name}': {e}")
+            logger.warning(
+                f"Error parsing Azure Artifacts HTML for '{package_name}': {e}. "
+                f"Response length: {len(response.text)} bytes, "
+                f"Response preview: {response.text[:500]}"
+            )
             return None
         
         if not parser.versions:
-            logger.debug(f"No versions found in Azure Artifacts HTML for '{package_name}'")
+            if parser.links_processed == 0:
+                logger.info(
+                    f"No links found in Azure Artifacts HTML for '{package_name}'. "
+                    f"This may indicate: (1) HTML structure differs from PEP 503 format, "
+                    f"(2) package doesn't exist, or (3) authentication required. "
+                    f"Response preview: {response.text[:500]}"
+                )
+            else:
+                logger.info(
+                    f"Found {parser.links_processed} link(s) but no versions extracted for '{package_name}'. "
+                    f"This may indicate: (1) package name mismatch (expected '{package_name}'), "
+                    f"(2) filename format differs from expected pattern, or (3) first release. "
+                    f"Response preview: {response.text[:500]}"
+                )
             return None
         
         # Find the latest version
         versions = list(parser.versions)
-        logger.debug(f"Found {len(versions)} versions in Azure Artifacts: {versions}")
+        logger.info(f"Found {len(versions)} version(s) in Azure Artifacts HTML: {versions}")
         
         # Sort versions to find the latest
         try:
             sorted_versions = sorted(versions, key=_parse_version_for_sort, reverse=True)
             latest_version = sorted_versions[0]
-            logger.info(f"Found latest version {latest_version} on Azure Artifacts for '{package_name}'")
+            logger.info(f"Latest version on Azure Artifacts for '{package_name}': {latest_version}")
             return latest_version
         except Exception as e:
-            logger.warning(f"Error sorting versions for '{package_name}': {e}")
+            logger.warning(
+                f"Error sorting versions for '{package_name}': {e}. "
+                f"Versions found: {versions}. Using first version as fallback."
+            )
             # Fallback: return the first version found
             return versions[0]
             
     except requests.RequestException as e:
-        logger.warning(f"Network error querying Azure Artifacts for '{package_name}': {e}")
+        logger.warning(
+            f"Network error querying Azure Artifacts for '{package_name}': {e}. "
+            f"URL: {simple_index_url}"
+        )
         return None
     except Exception as e:
-        logger.warning(f"Unexpected error querying Azure Artifacts for '{package_name}': {e}", exc_info=True)
+        logger.warning(
+            f"Unexpected error querying Azure Artifacts for '{package_name}': {e}. "
+            f"URL: {simple_index_url}",
+            exc_info=True
+        )
         return None
 
 
