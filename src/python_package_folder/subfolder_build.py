@@ -296,6 +296,10 @@ class SubfolderBuildConfig:
             
             # Read exclude patterns from root pyproject.toml and inject them
             exclude_patterns = read_exclude_patterns(original_pyproject)
+            print(
+                f"INFO: Read exclude patterns from {original_pyproject}: {exclude_patterns}",
+                file=sys.stderr,
+            )
             if exclude_patterns:
                 adjusted_content = self._inject_exclude_patterns(adjusted_content, exclude_patterns)
 
@@ -389,6 +393,10 @@ class SubfolderBuildConfig:
 
         # Read exclude patterns from root pyproject.toml
         exclude_patterns = read_exclude_patterns(original_pyproject)
+        print(
+            f"INFO: Read exclude patterns from {original_pyproject}: {exclude_patterns}",
+            file=sys.stderr,
+        )
 
         if data:
             # Modify using parsed data
@@ -975,7 +983,9 @@ class SubfolderBuildConfig:
         Args:
             exclude_patterns: List of regex patterns to match against path components
         """
+        print(f"INFO: Exclude patterns: {exclude_patterns}", file=sys.stderr)
         if not exclude_patterns:
+            print("INFO: No exclude patterns to apply", file=sys.stderr)
             return
 
         # Compile regex patterns for efficiency
