@@ -346,12 +346,24 @@ class Publisher:
             # Provide helpful hints based on common errors
             if e.returncode == 1:
                 if e.stderr and ("already exists" in e.stderr.lower() or "409" in e.stderr or "conflict" in e.stderr.lower()):
-                    print(
-                        "\nHint: This version may already exist on the repository. "
-                        "Use --skip-existing to skip files that already exist, "
-                        "or publish a new version.",
-                        file=sys.stderr,
-                    )
+                    if self.repository == Repository.AZURE:
+                        print(
+                            "\nHint for Azure Artifacts: If the version query returned 404 (not found) "
+                            "with authentication but the upload returns 409 Conflict, this could indicate:\n"
+                            "  - Different authentication requirements between simple index (read) and upload (write) endpoints\n"
+                            "  - The simple index endpoint may require different permissions or authentication method\n"
+                            "  - The package already exists with this version\n"
+                            "  - Use --skip-existing to skip files that already exist\n"
+                            "  - Check if your token has 'Packaging (read)' scope in addition to 'Packaging (read & write)'",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(
+                            "\nHint: This version may already exist on the repository. "
+                            "Use --skip-existing to skip files that already exist, "
+                            "or publish a new version.",
+                            file=sys.stderr,
+                        )
                 elif e.stderr and ("401" in e.stderr or "unauthorized" in e.stderr.lower()):
                     print(
                         "\nHint: Authentication failed. Check your credentials.",

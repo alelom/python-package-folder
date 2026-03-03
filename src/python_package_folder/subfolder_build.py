@@ -402,6 +402,10 @@ class SubfolderBuildConfig:
             # Modify using parsed data
             if "project" in data:
                 data["project"]["name"] = self.package_name
+                # Log the package name being set
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"Setting package name in temporary pyproject.toml: '{self.package_name}'")
                 if "version" in data["project"]:
                     data["project"]["version"] = self.version
                 elif "dynamic" in data["project"]:
@@ -474,6 +478,11 @@ class SubfolderBuildConfig:
         packages_path, package_dirs = self._get_package_structure()
         if not package_dirs:
             package_dirs = []
+
+        # Log the package name being set via string manipulation
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Setting package name in temporary pyproject.toml (string manipulation): '{self.package_name}'")
 
         for _i, line in enumerate(lines):
             # Skip build-system section - we'll add our own for subfolder builds

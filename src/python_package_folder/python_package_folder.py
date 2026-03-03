@@ -208,6 +208,14 @@ def main() -> int:
                         " ", "-"
                     ).lower().strip("-")
                     subfolder_rel_path = src_dir.relative_to(project_root)
+                    
+                    # Log the package name being used for version query
+                    logger = logging.getLogger(__name__)
+                    logger.info(
+                        f"Querying registry for package name: '{package_name}' "
+                        f"(derived from src_dir: '{src_dir.name}', args.package_name: {args.package_name})"
+                    )
+                    
                     resolved_version, error_details = resolve_version(
                         project_root,
                         package_name=package_name,

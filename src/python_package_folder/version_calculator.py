@@ -246,10 +246,27 @@ def _query_azure_artifacts_version(
             )
             return None
         elif response.status_code == 404:
-            logger.info(
-                f"Package '{package_name}' not found on Azure Artifacts (404) - this appears to be the first release. "
-                f"URL: {simple_index_url}"
-            )
+            if auth:
+                # If we're using authentication and still get 404, it could be various issues
+                logger.warning(
+                    f"Package '{package_name}' not found on Azure Artifacts (404) with authentication. "
+                    f"This could indicate:\n"
+                    f"  (1) Different authentication requirements between simple index (read) and upload (write) endpoints\n"
+                    f"  (2) The simple index endpoint may require different permissions or authentication method\n"
+                    f"  (3) This is the first release (package doesn't exist yet)\n"
+                    f"  (4) Package name mismatch between query and publish\n"
+                    f"URL: {simple_index_url}\n"
+                    f"Note: If publishing succeeds but querying fails with 404, check:\n"
+                    f"  - Whether the simple index endpoint requires different authentication\n"
+                    f"  - Whether your token has 'Packaging (read)' scope in addition to 'Packaging (read & write)'\n"
+                    f"  - Whether the package name used for querying matches the published package name"
+                )
+            else:
+                logger.info(
+                    f"Package '{package_name}' not found on Azure Artifacts (404) - this appears to be the first release. "
+                    f"Note: If authentication is required, provide credentials via --username/--password or environment variables. "
+                    f"URL: {simple_index_url}"
+                )
             return None
         elif response.status_code != 200:
             logger.warning(

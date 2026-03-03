@@ -1227,6 +1227,14 @@ class BuildManager:
                         publish_package_name = (
                             self.src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
                         )
+                    
+                    # Log the package name being used for publishing
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(
+                        f"Publishing package with name: '{publish_package_name}' "
+                        f"(captured: {captured_package_name}, param: {package_name}, src_dir: '{self.src_dir.name}')"
+                    )
                 else:
                     # For regular builds, get package name from pyproject.toml
                     try:
