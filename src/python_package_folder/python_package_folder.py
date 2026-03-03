@@ -186,6 +186,21 @@ def main() -> int:
                 repository = args.publish if args.publish else None
                 repository_url = args.repository_url if args.publish else None
                 
+                # Get credentials for authenticated registry queries (especially Azure Artifacts)
+                # Try to get them from args or environment variables
+                query_username = args.username
+                query_password = args.password
+                
+                # If not provided via args, check environment variables (for Azure Artifacts)
+                if repository == "azure" and not query_username:
+                    query_username = os.getenv("TWINE_USERNAME") or os.getenv("PYPI_USERNAME")
+                if repository == "azure" and not query_password:
+                    query_password = (
+                        os.getenv("TWINE_PASSWORD")
+                        or os.getenv("PYPI_PASSWORD")
+                        or os.getenv("AZURE_ARTIFACTS_TOKEN")
+                    )
+                
                 if is_subfolder:
                     # Workflow 1: subfolder build
                     # src_dir is guaranteed to be relative to project_root due to is_subfolder check
@@ -199,6 +214,8 @@ def main() -> int:
                         subfolder_path=subfolder_rel_path,
                         repository=repository,
                         repository_url=repository_url,
+                        username=query_username,
+                        password=query_password,
                     )
                 else:
                     # Workflow 2: main package
@@ -221,6 +238,8 @@ def main() -> int:
                         subfolder_path=None,
                         repository=repository,
                         repository_url=repository_url,
+                        username=query_username,
+                        password=query_password,
                     )
 
                 if resolved_version:

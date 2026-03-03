@@ -25,6 +25,8 @@ def query_registry_version(
     package_name: str,
     repository: str,
     repository_url: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
 ) -> str | None:
     """
     Query package registry for the latest published version.
@@ -33,6 +35,8 @@ def query_registry_version(
         package_name: Package name to query
         repository: Repository type ('pypi', 'testpypi', or 'azure')
         repository_url: Repository URL (required for Azure Artifacts)
+        username: Optional username for authenticated queries (Azure Artifacts)
+        password: Optional password/token for authenticated queries (Azure Artifacts)
 
     Returns:
         Latest version string or None if not found/unsupported
@@ -54,7 +58,7 @@ def query_registry_version(
                 logger.warning("Azure Artifacts repository URL not provided")
                 return None
             logger.info(f"Querying Azure Artifacts for package '{package_name}' at {repository_url}")
-            version = _query_azure_artifacts_version(package_name, repository_url)
+            version = _query_azure_artifacts_version(package_name, repository_url, username, password)
             if version:
                 logger.info(f"Found version {version} on Azure Artifacts")
             else:
@@ -184,6 +188,8 @@ class SimpleIndexParser(HTMLParser):
 def _query_azure_artifacts_version(
     package_name: str,
     repository_url: str,
+    username: str | None = None,
+    password: str | None = None,
 ) -> str | None:
     """
     Query Azure Artifacts for the latest version.
@@ -194,6 +200,8 @@ def _query_azure_artifacts_version(
     Args:
         package_name: Package name to query
         repository_url: Azure Artifacts repository URL
+        username: Optional username for authentication
+        password: Optional password/token for authentication
 
     Returns:
         Latest version string or None if not found/unsupported
@@ -212,8 +220,15 @@ def _query_azure_artifacts_version(
         return None
 
     try:
-        logger.info(f"Fetching Azure Artifacts simple index for '{package_name}'...")
-        response = requests.get(simple_index_url, timeout=10)
+        # Prepare authentication if credentials are provided
+        auth = None
+        if username and password:
+            auth = (username, password)
+            logger.info(f"Fetching Azure Artifacts simple index for '{package_name}' with authentication...")
+        else:
+            logger.info(f"Fetching Azure Artifacts simple index for '{package_name}' (no authentication)...")
+        
+        response = requests.get(simple_index_url, auth=auth, timeout=10)
         logger.info(f"Azure Artifacts response: status={response.status_code}, content_length={len(response.text)} bytes")
         
         if response.status_code == 401:
@@ -628,6 +643,8 @@ def resolve_version(
     subfolder_path: Path | None = None,
     repository: str | None = None,
     repository_url: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
 ) -> tuple[str | None, str | None]:
     """
     Resolve the next version using conventional commits.
@@ -640,6 +657,8 @@ def resolve_version(
         subfolder_path: Optional path to subfolder (relative to project_root)
         repository: Optional target repository ('pypi', 'testpypi', or 'azure')
         repository_url: Optional repository URL (required for Azure Artifacts)
+        username: Optional username for authenticated registry queries (Azure Artifacts)
+        password: Optional password/token for authenticated registry queries (Azure Artifacts)
 
     Returns:
         Tuple of (version string if a release is determined, error message if any)
@@ -651,7 +670,7 @@ def resolve_version(
     baseline_version = None
     if repository and package_name:
         logger.info(f"Attempting to query {repository} for baseline version of '{package_name}'")
-        baseline_version = query_registry_version(package_name, repository, repository_url)
+        baseline_version = query_registry_version(package_name, repository, repository_url, username, password)
 
     # Step 2: Fallback to git tags if registry query failed
     if not baseline_version:

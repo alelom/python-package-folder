@@ -152,6 +152,39 @@ class TestQueryRegistryVersion:
         assert version is None
 
     @patch("python_package_folder.version_calculator.requests.get")
+    def test_query_azure_artifacts_version_with_auth(self, mock_get: MagicMock) -> None:
+        """Test querying Azure Artifacts with authentication."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = """<!DOCTYPE html>
+<html>
+  <head>
+    <title>Links for test-package</title>
+  </head>
+  <body>
+    <h1>Links for test-package</h1>
+    <a href="test-package-1.0.0-py3-none-any.whl">test-package-1.0.0-py3-none-any.whl</a>
+    <a href="test-package-1.1.0-py3-none-any.whl">test-package-1.1.0-py3-none-any.whl</a>
+  </body>
+</html>"""
+        mock_get.return_value = mock_response
+
+        version = query_registry_version(
+            "test-package",
+            "azure",
+            repository_url="https://pkgs.dev.azure.com/ORG/PROJECT/_packaging/FEED/pypi/upload",
+            username="testuser",
+            password="testtoken",
+        )
+        # Should parse HTML and return the latest version
+        assert version == "1.1.0"
+        
+        # Verify authentication was used
+        mock_get.assert_called_once()
+        call_args = mock_get.call_args
+        assert call_args[1]["auth"] == ("testuser", "testtoken")
+
+    @patch("python_package_folder.version_calculator.requests.get")
     def test_query_registry_version_error_handling(self, mock_get: MagicMock) -> None:
         """Test that registry query errors are handled gracefully."""
         mock_get.side_effect = requests.RequestException("Network error")
