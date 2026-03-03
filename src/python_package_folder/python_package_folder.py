@@ -98,37 +98,68 @@ Alternatively, provide --version explicitly to skip automatic version resolution
         else:
             # Try to locate script in installed package using importlib.resources
             script_path = None
+            diagnostic_info = []
+            
+            # Try importlib.resources approach
             try:
                 package = resources.files("python_package_folder")
                 script_resource = package / "scripts" / "get-next-version.cjs"
+                
+                diagnostic_info.append(f"Checked importlib.resources: python_package_folder/scripts/get-next-version.cjs")
+                
                 if script_resource.is_file():
                     # Try direct path conversion first (normal file system install)
                     try:
                         script_path_candidate = Path(str(script_resource))
                         if script_path_candidate.exists():
                             script_path = script_path_candidate
-                    except (TypeError, ValueError):
-                        pass
+                            diagnostic_info.append(f"Found via direct path: {script_path}")
+                    except (TypeError, ValueError) as e:
+                        diagnostic_info.append(f"Direct path conversion failed: {e}")
 
                     # If direct path didn't work, try as_file() for zip/pex installs
                     if script_path is None:
                         try:
                             temp_script_context = resources.as_file(script_resource)
                             script_path = temp_script_context.__enter__()
-                        except (TypeError, ValueError, OSError):
-                            pass
-            except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
-                pass
+                            diagnostic_info.append(f"Found via as_file() (temp): {script_path}")
+                        except (TypeError, ValueError, OSError) as e:
+                            diagnostic_info.append(f"as_file() extraction failed: {e}")
+                else:
+                    # Try to list what's actually in the scripts directory
+                    try:
+                        scripts_dir = package / "scripts"
+                        if scripts_dir.is_dir():
+                            available_files = list(scripts_dir.iterdir())
+                            diagnostic_info.append(f"Scripts directory exists. Available files: {[f.name for f in available_files]}")
+                        else:
+                            diagnostic_info.append("Scripts directory does not exist in package")
+                    except Exception as e:
+                        diagnostic_info.append(f"Could not list scripts directory: {e}")
+            except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError) as e:
+                diagnostic_info.append(f"importlib.resources failed: {type(e).__name__}: {e}")
 
             # Fallback: try relative to package directory
             if script_path is None:
                 package_dir = Path(__file__).parent
                 fallback_script = package_dir / "scripts" / "get-next-version.cjs"
+                diagnostic_info.append(f"Checked fallback path: {fallback_script}")
                 if fallback_script.exists():
                     script_path = fallback_script
+                    diagnostic_info.append(f"Found via fallback: {script_path}")
+                else:
+                    diagnostic_info.append(f"Fallback path does not exist")
 
         if not script_path:
             error_msg = "Could not locate get-next-version.cjs script"
+            error_msg += "\n\nDiagnostic information:"
+            for info in diagnostic_info:
+                error_msg += f"\n  - {info}"
+            error_msg += (
+                "\n\nThis usually means the script was not included in the installed package."
+                "\nPlease ensure you're using the latest version of python-package-folder."
+                "\nIf the issue persists, report this as a bug."
+            )
             print(f"Error: {error_msg}", file=sys.stderr)
             return None, error_msg
 
