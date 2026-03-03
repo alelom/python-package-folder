@@ -405,46 +405,9 @@ function getGlobalNpmPaths() {
       }
     }
 
-    // For subfolder builds, require semantic-release-commit-filter
-    // (required only to verify it's installed; the plugin is used via options.plugins)
-    if (isSubfolderBuild) {
-      let commitFilterFound = false;
-      let lastError = null;
-      
-      // Try resolving from all paths
-      for (const tryPath of resolvePaths) {
-        try {
-          const commitFilterPath = require.resolve('semantic-release-commit-filter', { paths: [tryPath] });
-          require(commitFilterPath);
-          commitFilterFound = true;
-          break;
-        } catch (e) {
-          lastError = e;
-          continue;
-        }
-      }
-      
-      // If not found in any path, try default require
-      if (!commitFilterFound) {
-        try {
-          require('semantic-release-commit-filter');
-          commitFilterFound = true;
-        } catch (e) {
-          lastError = e;
-        }
-      }
-      
-      if (!commitFilterFound) {
-        console.error('Error: semantic-release-commit-filter is not installed.');
-        console.error('Please install it with: npm install -g semantic-release-commit-filter');
-        console.error('Or install it as a devDependency: npm install --save-dev semantic-release-commit-filter');
-        console.error(`Debug: Tried resolving from paths: ${resolvePaths.join(', ')}`);
-        if (lastError) {
-          console.error(`Debug: Last error: ${lastError.message}`);
-        }
-        process.exit(1);
-      }
-    }
+    // For subfolder builds, semantic-release-commit-filter will be loaded by semantic-release
+    // We don't need to check for it upfront - semantic-release handles plugin resolution
+    // and will provide clear error messages if the plugin is missing
 
   // Query registry for latest version if repository info is provided
   let registryVersion = null;
