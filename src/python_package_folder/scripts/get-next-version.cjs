@@ -314,50 +314,76 @@ async function queryRegistryVersion(packageName, repository, repositoryUrl) {
 /**
  * Get global npm prefix for module resolution.
  * This helps find globally installed npm packages.
- * @returns {string|null} Path to global node_modules or null if not found
+ * @returns {string[]} Array of possible global node_modules paths
  */
-function getGlobalNpmPrefix() {
+function getGlobalNpmPaths() {
+  const paths = [];
+  
   try {
     // Get npm's global prefix (where global packages are installed)
     const prefix = execSync('npm config get prefix', { encoding: 'utf8' }).trim();
-    // Global node_modules is typically at <prefix>/lib/node_modules
+    
+    // Global node_modules is typically at <prefix>/lib/node_modules (Linux/Mac)
     const globalNodeModules = path.join(prefix, 'lib', 'node_modules');
     if (fs.existsSync(globalNodeModules)) {
-      return globalNodeModules;
+      paths.push(globalNodeModules);
     }
+    
     // Alternative location on some systems
     const altGlobalNodeModules = path.join(prefix, 'node_modules');
     if (fs.existsSync(altGlobalNodeModules)) {
-      return altGlobalNodeModules;
+      paths.push(altGlobalNodeModules);
     }
-    return null;
+    
+    // Also try the prefix itself (some npm configurations)
+    if (fs.existsSync(prefix)) {
+      paths.push(prefix);
+    }
   } catch (e) {
-    // If npm config fails, try to find it via NODE_PATH or common locations
-    return null;
+    // If npm config fails, continue with other methods
   }
+  
+  // Try npm root -g to get global node_modules directly
+  try {
+    const npmRoot = execSync('npm root -g', { encoding: 'utf8' }).trim();
+    if (fs.existsSync(npmRoot) && !paths.includes(npmRoot)) {
+      paths.push(npmRoot);
+    }
+  } catch (e) {
+    // Ignore errors
+  }
+  
+  // Check NODE_PATH environment variable
+  if (process.env.NODE_PATH) {
+    const nodePaths = process.env.NODE_PATH.split(path.delimiter);
+    for (const nodePath of nodePaths) {
+      if (fs.existsSync(nodePath) && !paths.includes(nodePath)) {
+        paths.push(nodePath);
+      }
+    }
+  }
+  
+  return paths;
 }
 
 // Main execution
 (async () => {
   try {
-    // Get global npm path for module resolution
-    const globalNpmPath = getGlobalNpmPrefix();
-    const resolvePaths = [projectRoot];
-    if (globalNpmPath) {
-      resolvePaths.push(globalNpmPath);
-    }
+    // Get global npm paths for module resolution
+    const globalNpmPaths = getGlobalNpmPaths();
+    const resolvePaths = [projectRoot, ...globalNpmPaths];
     
     // Try to require semantic-release
-    // First try resolving from project root (for devDependencies), then try global, then fall back to default
+    // First try resolving from project root + global paths, then try global only, then fall back to default
     let semanticRelease;
     try {
       const semanticReleasePath = require.resolve('semantic-release', { paths: resolvePaths });
       semanticRelease = require(semanticReleasePath);
     } catch (resolveError) {
       try {
-        // Try with just global path
-        if (globalNpmPath) {
-          const semanticReleasePath = require.resolve('semantic-release', { paths: [globalNpmPath] });
+        // Try with just global paths
+        if (globalNpmPaths.length > 0) {
+          const semanticReleasePath = require.resolve('semantic-release', { paths: globalNpmPaths });
           semanticRelease = require(semanticReleasePath);
         } else {
           throw resolveError;
@@ -382,29 +408,41 @@ function getGlobalNpmPrefix() {
     // For subfolder builds, require semantic-release-commit-filter
     // (required only to verify it's installed; the plugin is used via options.plugins)
     if (isSubfolderBuild) {
-      try {
-        const commitFilterPath = require.resolve('semantic-release-commit-filter', { paths: resolvePaths });
-        require(commitFilterPath);
-      } catch (resolveError) {
+      let commitFilterFound = false;
+      let lastError = null;
+      
+      // Try resolving from all paths
+      for (const tryPath of resolvePaths) {
         try {
-          // Try with just global path
-          if (globalNpmPath) {
-            const commitFilterPath = require.resolve('semantic-release-commit-filter', { paths: [globalNpmPath] });
-            require(commitFilterPath);
-          } else {
-            throw resolveError;
-          }
-        } catch (globalError) {
-          try {
-            // Final fallback: default require
-            require('semantic-release-commit-filter');
-          } catch (e) {
-            console.error('Error: semantic-release-commit-filter is not installed.');
-            console.error('Please install it with: npm install -g semantic-release-commit-filter');
-            console.error('Or install it as a devDependency: npm install --save-dev semantic-release-commit-filter');
-            process.exit(1);
-          }
+          const commitFilterPath = require.resolve('semantic-release-commit-filter', { paths: [tryPath] });
+          require(commitFilterPath);
+          commitFilterFound = true;
+          break;
+        } catch (e) {
+          lastError = e;
+          continue;
         }
+      }
+      
+      // If not found in any path, try default require
+      if (!commitFilterFound) {
+        try {
+          require('semantic-release-commit-filter');
+          commitFilterFound = true;
+        } catch (e) {
+          lastError = e;
+        }
+      }
+      
+      if (!commitFilterFound) {
+        console.error('Error: semantic-release-commit-filter is not installed.');
+        console.error('Please install it with: npm install -g semantic-release-commit-filter');
+        console.error('Or install it as a devDependency: npm install --save-dev semantic-release-commit-filter');
+        console.error(`Debug: Tried resolving from paths: ${resolvePaths.join(', ')}`);
+        if (lastError) {
+          console.error(`Debug: Last error: ${lastError.message}`);
+        }
+        process.exit(1);
       }
     }
 
