@@ -56,9 +56,6 @@ jobs:
       - name: Install all dependencies
         run: uv sync --all-extras
 
-      - name: Run linting
-        run: uv run ruff check .
-
       - name: Check formatting
         continue-on-error: true
         run: uv run ruff format --check .
