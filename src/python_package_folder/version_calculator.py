@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+import sys
+import tempfile
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -185,6 +187,175 @@ class SimpleIndexParser(HTMLParser):
         return None
 
 
+def _query_azure_artifacts_version_via_pip_index(
+    package_name: str,
+    repository_url: str,
+    username: str | None = None,
+    password: str | None = None,
+) -> str | None:
+    """
+    Query Azure Artifacts for latest version using 'pip index versions'.
+    
+    This method uses pip's built-in index querying, which uses the same
+    authentication mechanism as pip install/publish.
+    
+    Args:
+        package_name: Package name to query
+        repository_url: Azure Artifacts repository URL
+        username: Optional username for authentication
+        password: Optional password/token for authentication
+    
+    Returns:
+        Latest version string or None if not found/unsupported
+    """
+    # Build pip index URL (remove /upload suffix if present)
+    index_url = repository_url.replace("/upload", "/simple")
+    
+    logger.info(f"Querying Azure Artifacts via 'pip index versions' for '{package_name}'...")
+    
+    # Build pip command
+    cmd = ["pip", "index", "versions", package_name, "--index-url", index_url]
+    
+    # Add authentication if provided
+    # pip supports credentials in URL format: https://user:pass@host/path
+    if username and password:
+        auth_url = index_url.replace("https://", f"https://{username}:{password}@")
+        cmd[cmd.index("--index-url") + 1] = auth_url
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        
+        if result.returncode == 0:
+            # Parse output: "Package 'data' versions: 0.1.0, 0.2.0, 0.3.0"
+            # Or: "data (0.1.0, 0.2.0, 0.3.0)"
+            match = re.search(r"versions?:\s*(.+)", result.stdout, re.IGNORECASE)
+            if not match:
+                # Try alternative format: "package-name (version1, version2, ...)"
+                match = re.search(rf"{re.escape(package_name)}\s*\(([^)]+)\)", result.stdout)
+            
+            if match:
+                versions_str = match.group(1).strip()
+                # Split by comma and clean up
+                versions = [v.strip().strip("'\"") for v in versions_str.split(",")]
+                if versions:
+                    # Sort versions to get the latest
+                    try:
+                        sorted_versions = sorted(versions, key=_parse_version_for_sort, reverse=True)
+                        latest_version = sorted_versions[0]
+                        logger.info(f"Found latest version via pip index: {latest_version}")
+                        return latest_version
+                    except Exception as e:
+                        logger.warning(f"Error sorting versions from pip index: {e}. Using first version.")
+                        return versions[-1]  # Return last one as fallback
+        
+        # Check if error indicates package doesn't exist
+        if "not found" in result.stderr.lower() or "no such package" in result.stderr.lower():
+            logger.info(f"Package '{package_name}' not found via pip index (first release)")
+        else:
+            logger.debug(f"pip index versions output: stdout={result.stdout}, stderr={result.stderr}")
+        
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Timeout querying Azure Artifacts via pip index for '{package_name}'")
+        return None
+    except FileNotFoundError:
+        # pip command not found or pip index not available (pip < 21.2)
+        logger.debug("'pip index versions' not available, will try alternative method")
+        return None
+    except Exception as e:
+        logger.warning(f"Error querying Azure Artifacts via pip index for '{package_name}': {e}")
+        return None
+
+
+def _query_azure_artifacts_version_via_pip_install(
+    package_name: str,
+    repository_url: str,
+    username: str | None = None,
+    password: str | None = None,
+) -> str | None:
+    """
+    Query Azure Artifacts by attempting to install the latest version
+    using 'pip install --dry-run', then extracting the version.
+    
+    This is a fallback method when 'pip index versions' is not available.
+    
+    Args:
+        package_name: Package name to query
+        repository_url: Azure Artifacts repository URL
+        username: Optional username for authentication
+        password: Optional password/token for authentication
+    
+    Returns:
+        Latest version string or None if not found/unsupported
+    """
+    # Build index URL
+    index_url = repository_url.replace("/upload", "/simple")
+    
+    logger.info(f"Querying Azure Artifacts via 'pip install --dry-run' for '{package_name}'...")
+    
+    # Build pip command
+    cmd = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--index-url",
+        index_url,
+        "--no-deps",  # Don't install dependencies
+        "--dry-run",  # Don't actually install
+        package_name,
+    ]
+    
+    # Add authentication if provided
+    if username and password:
+        auth_url = index_url.replace("https://", f"https://{username}:{password}@")
+        cmd[cmd.index("--index-url") + 1] = auth_url
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        
+        if result.returncode == 0:
+            # Parse output to find version
+            # pip shows: "Would install data-0.3.0" or "Collecting data==0.3.0"
+            # Try multiple patterns
+            patterns = [
+                rf"Would install\s+{re.escape(package_name)}-([\d.]+(?:[a-zA-Z0-9]+)?)",
+                rf"Collecting\s+{re.escape(package_name)}==([\d.]+(?:[a-zA-Z0-9]+)?)",
+                rf"Downloading\s+{re.escape(package_name)}-([\d.]+(?:[a-zA-Z0-9]+)?)",
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, result.stdout, re.IGNORECASE)
+                if match:
+                    version = match.group(1)
+                    logger.info(f"Found version via pip install --dry-run: {version}")
+                    return version
+        
+        # Check if error indicates package doesn't exist
+        if "not found" in result.stderr.lower() or "no matching distribution" in result.stderr.lower():
+            logger.info(f"Package '{package_name}' not found via pip install (first release)")
+        else:
+            logger.debug(f"pip install --dry-run output: stdout={result.stdout[:500]}, stderr={result.stderr[:500]}")
+        
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Timeout querying Azure Artifacts via pip install for '{package_name}'")
+        return None
+    except Exception as e:
+        logger.warning(f"Error querying Azure Artifacts via pip install for '{package_name}': {e}")
+        return None
+
+
 def _query_azure_artifacts_version(
     package_name: str,
     repository_url: str,
@@ -193,6 +364,50 @@ def _query_azure_artifacts_version(
 ) -> str | None:
     """
     Query Azure Artifacts for the latest version.
+
+    Tries multiple methods in order:
+    1. pip index versions (fastest, uses same auth as pip install)
+    2. pip install --dry-run (fallback if pip index not available)
+    3. HTML parsing of simple index (last resort)
+
+    Args:
+        package_name: Package name to query
+        repository_url: Azure Artifacts repository URL
+        username: Optional username for authentication
+        password: Optional password/token for authentication
+
+    Returns:
+        Latest version string or None if not found/unsupported
+    """
+    # Method 1: Try pip index versions first (fastest, uses same auth as publishing)
+    version = _query_azure_artifacts_version_via_pip_index(
+        package_name, repository_url, username, password
+    )
+    if version:
+        return version
+    
+    # Method 2: Fallback to pip install --dry-run
+    version = _query_azure_artifacts_version_via_pip_install(
+        package_name, repository_url, username, password
+    )
+    if version:
+        return version
+    
+    # Method 3: Last resort - HTML parsing (original method)
+    logger.info(f"Falling back to HTML parsing for '{package_name}'...")
+    return _query_azure_artifacts_version_via_html(
+        package_name, repository_url, username, password
+    )
+
+
+def _query_azure_artifacts_version_via_html(
+    package_name: str,
+    repository_url: str,
+    username: str | None = None,
+    password: str | None = None,
+) -> str | None:
+    """
+    Query Azure Artifacts for the latest version via HTML parsing.
 
     Azure Artifacts uses a simple index format (HTML) following PEP 503.
     Parses the HTML to extract version numbers from package filenames.
