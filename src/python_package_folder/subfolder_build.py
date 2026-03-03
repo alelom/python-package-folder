@@ -231,8 +231,17 @@ class SubfolderBuildConfig:
                             for j in range(i + 1, len(result)):
                                 if "]" in result[j]:
                                     # Insert before closing
-                                    indent = "    " if result[j].strip().startswith('"') else ""
-                                    result.insert(j, f'{indent}"python-package-folder",')
+                                    # Determine indentation from the previous line (last item in list)
+                                    if j > i + 1:
+                                        # Look at the previous line to get indentation
+                                        prev_line = result[j - 1]
+                                        # Extract leading whitespace from previous line
+                                        indent = len(prev_line) - len(prev_line.lstrip())
+                                        indent_str = " " * indent
+                                    else:
+                                        # Fallback: use standard 4-space indent
+                                        indent_str = "    "
+                                    result.insert(j, f'{indent_str}"python-package-folder",')
                                     break
                     break
                 elif in_build_system and line.strip().startswith("[") and not line.strip().startswith("[build-system"):
@@ -659,8 +668,17 @@ class SubfolderBuildConfig:
                             for j in range(i + 1, len(result)):
                                 if "]" in result[j]:
                                     # Insert before closing
-                                    indent = "    " if result[j].strip().startswith('"') else ""
-                                    result.insert(j, f'{indent}"python-package-folder",')
+                                    # Determine indentation from the previous line (last item in list)
+                                    if j > i + 1:
+                                        # Look at the previous line to get indentation
+                                        prev_line = result[j - 1]
+                                        # Extract leading whitespace from previous line
+                                        indent = len(prev_line) - len(prev_line.lstrip())
+                                        indent_str = " " * indent
+                                    else:
+                                        # Fallback: use standard 4-space indent
+                                        indent_str = "    "
+                                    result.insert(j, f'{indent_str}"python-package-folder",')
                                     break
                         requires_modified = True
                     break
