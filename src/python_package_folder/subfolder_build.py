@@ -205,13 +205,71 @@ class SubfolderBuildConfig:
         has_build_system = any(line.strip().startswith("[build-system]") for line in result)
         if not has_build_system:
             # Insert build-system at the very beginning of the file
+            # Include python-package-folder in requires so the build hook is available
             build_system_lines = [
                 "[build-system]",
-                'requires = ["hatchling"]',
+                'requires = ["hatchling", "python-package-folder"]',
                 'build-backend = "hatchling.build"',
                 "",
             ]
             result = build_system_lines + result
+        else:
+            # Ensure python-package-folder is in requires for build hook availability
+            in_build_system = False
+            for i, line in enumerate(result):
+                if line.strip().startswith("[build-system]"):
+                    in_build_system = True
+                elif in_build_system and line.strip().startswith("requires"):
+                    # Check if python-package-folder is already in requires
+                    if "python-package-folder" not in line:
+                        # Add python-package-folder to requires
+                        if "]" in line:
+                            # Single-line requires
+                            result[i] = line.rstrip().rstrip("]") + ', "python-package-folder"]'
+                        else:
+                            # Multi-line requires, find the closing bracket
+                            for j in range(i + 1, len(result)):
+                                if "]" in result[j]:
+                                    # Insert before closing
+                                    indent = "    " if result[j].strip().startswith('"') else ""
+                                    result.insert(j, f'{indent}"python-package-folder",')
+                                    break
+                    break
+                elif in_build_system and line.strip().startswith("[") and not line.strip().startswith("[build-system"):
+                    # End of build-system section
+                    break
+
+        # Register the build hook to enable exclude patterns
+        build_hook_registered = any(
+            "[tool.hatch.build.hooks.custom]" in line for line in result
+        )
+        if not build_hook_registered:
+            # Add build hook registration after [tool.hatch.build.targets.wheel] section
+            hook_insert_index = len(result)
+            for i, line in enumerate(result):
+                if line.strip().startswith("[tool.hatch.build.targets.wheel]"):
+                    # Find the end of this section
+                    for j in range(i + 1, len(result)):
+                        if result[j].strip().startswith("[") and not result[j].strip().startswith(
+                            "[tool.hatch.build.targets"
+                        ):
+                            hook_insert_index = j
+                            break
+                    if hook_insert_index == len(result):
+                        # Insert after packages line if section continues
+                        for j in range(i + 1, len(result)):
+                            if result[j].strip().startswith("["):
+                                hook_insert_index = j
+                                break
+                    break
+
+            # Insert build hook registration
+            hook_lines = [
+                "",
+                "[tool.hatch.build.hooks.custom]",
+                'path = "python_package_folder._hatch_build:CustomBuildHook"',
+            ]
+            result[hook_insert_index:hook_insert_index] = hook_lines
 
         # Ensure hatch build section exists if packages path is needed
         if not packages_set and correct_packages_path:
@@ -570,13 +628,45 @@ class SubfolderBuildConfig:
         has_build_system = any(line.strip().startswith("[build-system]") for line in result)
         if not has_build_system:
             # Insert build-system at the very beginning of the file
+            # Include python-package-folder in requires so the build hook is available
             build_system_lines = [
                 "[build-system]",
-                'requires = ["hatchling"]',
+                'requires = ["hatchling", "python-package-folder"]',
                 'build-backend = "hatchling.build"',
                 "",
             ]
             result = build_system_lines + result
+        else:
+            # Ensure python-package-folder is in requires for build hook availability
+            in_build_system = False
+            requires_modified = False
+            for i, line in enumerate(result):
+                if line.strip().startswith("[build-system]"):
+                    in_build_system = True
+                elif in_build_system and line.strip().startswith("requires"):
+                    # Check if python-package-folder is already in requires
+                    if "python-package-folder" not in line:
+                        # Add python-package-folder to requires
+                        if "]" in line:
+                            # Single-line requires (may have closing bracket on same line)
+                            if line.strip().endswith("]"):
+                                result[i] = line.rstrip().rstrip("]") + ', "python-package-folder"]'
+                            else:
+                                # Closing bracket might be on same line but not at end
+                                result[i] = line.rstrip().rstrip("]") + ', "python-package-folder"]'
+                        else:
+                            # Multi-line requires, find the closing bracket
+                            for j in range(i + 1, len(result)):
+                                if "]" in result[j]:
+                                    # Insert before closing
+                                    indent = "    " if result[j].strip().startswith('"') else ""
+                                    result.insert(j, f'{indent}"python-package-folder",')
+                                    break
+                        requires_modified = True
+                    break
+                elif in_build_system and line.strip().startswith("[") and not line.strip().startswith("[build-system"):
+                    # End of build-system section
+                    break
 
         # Ensure packages is always set for subfolder builds
         if not packages_set and package_dirs:
@@ -586,6 +676,50 @@ class SubfolderBuildConfig:
                 result.append("[tool.hatch.build.targets.wheel]")
             packages_str = ", ".join(f'"{p}"' for p in package_dirs)
             result.append(f"packages = [{packages_str}]")
+
+        # Register the build hook to enable exclude patterns
+        # Always register the build hook if exclude patterns are present, or if we want to support them
+        # Check if build hook is already registered
+        build_hook_registered = any(
+            "[tool.hatch.build.hooks.custom]" in line for line in result
+        )
+
+        if not build_hook_registered:
+            # Add build hook registration after [tool.hatch.build.targets.wheel] section
+            hook_insert_index = len(result)
+            wheel_section_found = False
+            for i, line in enumerate(result):
+                if line.strip().startswith("[tool.hatch.build.targets.wheel]"):
+                    wheel_section_found = True
+                    # Find the end of this section
+                    for j in range(i + 1, len(result)):
+                        if result[j].strip().startswith("[") and not result[j].strip().startswith(
+                            "[tool.hatch.build.targets"
+                        ):
+                            hook_insert_index = j
+                            break
+                    if hook_insert_index == len(result):
+                        # Insert after packages line if section continues
+                        for j in range(i + 1, len(result)):
+                            if result[j].strip().startswith("["):
+                                hook_insert_index = j
+                                break
+                    break
+
+            # If wheel section not found, insert before sdist section or at end
+            if not wheel_section_found:
+                for i, line in enumerate(result):
+                    if line.strip().startswith("[tool.hatch.build.targets.sdist]"):
+                        hook_insert_index = i
+                        break
+
+            # Insert build hook registration
+            hook_lines = [
+                "",
+                "[tool.hatch.build.hooks.custom]",
+                'path = "python_package_folder._hatch_build:CustomBuildHook"',
+            ]
+            result[hook_insert_index:hook_insert_index] = hook_lines
 
         # Use only-include for source distributions to ensure only the subfolder is included
         # This prevents including files from the project root
