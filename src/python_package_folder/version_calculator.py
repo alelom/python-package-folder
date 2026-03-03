@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+from html.parser import HTMLParser
 from pathlib import Path
 
 import requests
@@ -110,6 +111,68 @@ def _query_pypi_version(package_name: str, registry: str) -> str | None:
         return None
 
 
+class SimpleIndexParser(HTMLParser):
+    """Parser for PEP 503 simple index HTML to extract package versions."""
+    
+    def __init__(self, package_name: str):
+        super().__init__()
+        self.package_name = package_name
+        self.versions: set[str] = set()
+        self.in_anchor = False
+        self.current_href = ""
+    
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            self.in_anchor = True
+            # Extract href attribute
+            for attr_name, attr_value in attrs:
+                if attr_name == "href" and attr_value:
+                    self.current_href = attr_value
+                    break
+    
+    def handle_data(self, data: str) -> None:
+        if self.in_anchor:
+            # Extract version from link text or href
+            # Format: package-name-version-... or package-name-version.tar.gz
+            version = self._extract_version_from_filename(data.strip())
+            if version:
+                self.versions.add(version)
+            # Also check href if it contains version info
+            if self.current_href:
+                version = self._extract_version_from_filename(self.current_href)
+                if version:
+                    self.versions.add(version)
+    
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a":
+            self.in_anchor = False
+            self.current_href = ""
+    
+    def _extract_version_from_filename(self, filename: str) -> str | None:
+        """Extract version number from package filename."""
+        # Pattern: package-name-version-... or package-name-version.tar.gz
+        # Examples: data-0.1.0-py3-none-any.whl, data-0.1.0.tar.gz
+        # The version is between the package name and the next separator
+        
+        # Normalize package name (replace - with _ for matching)
+        normalized_package = self.package_name.replace("-", "_").replace(".", "_")
+        
+        # Try to match: package-name-version- or package-name-version.
+        # Version format: X.Y.Z (semantic versioning)
+        pattern = rf"{re.escape(self.package_name)}-(\d+\.\d+\.\d+(?:\.\d+)?(?:[a-zA-Z0-9]+)?)"
+        match = re.search(pattern, filename, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        
+        # Fallback: try with normalized package name
+        pattern = rf"{re.escape(normalized_package)}-(\d+\.\d+\.\d+(?:\.\d+)?(?:[a-zA-Z0-9]+)?)"
+        match = re.search(pattern, filename, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        
+        return None
+
+
 def _query_azure_artifacts_version(
     package_name: str,
     repository_url: str,
@@ -117,8 +180,8 @@ def _query_azure_artifacts_version(
     """
     Query Azure Artifacts for the latest version.
 
-    Azure Artifacts uses a simple index format (HTML) which is more complex to parse.
-    For now, we'll attempt to query but fall back gracefully if it fails.
+    Azure Artifacts uses a simple index format (HTML) following PEP 503.
+    Parses the HTML to extract version numbers from package filenames.
 
     Args:
         package_name: Package name to query
@@ -141,24 +204,49 @@ def _query_azure_artifacts_version(
         return None
 
     try:
-        response = requests.get(simple_index_url, timeout=5)
+        response = requests.get(simple_index_url, timeout=10)
         logger.debug(f"Azure Artifacts response status: {response.status_code}")
         
         if response.status_code == 401:
             logger.warning(f"Authentication required for Azure Artifacts (401). Package '{package_name}' may require authentication to query.")
+            return None
         elif response.status_code == 403:
             logger.warning(f"Access forbidden for Azure Artifacts (403). Package '{package_name}' may not be accessible or requires different permissions.")
+            return None
         elif response.status_code == 404:
             logger.debug(f"Package '{package_name}' not found on Azure Artifacts (404) - first release")
+            return None
         elif response.status_code != 200:
             logger.warning(f"Unexpected status code {response.status_code} from Azure Artifacts for '{package_name}'")
+            return None
         
-        # Azure Artifacts simple index returns HTML, not JSON
-        # Parsing HTML is complex and may require authentication
-        # For now, we'll return None to fall back to git tags
-        # This can be enhanced later with proper HTML parsing or API endpoint discovery
-        logger.info(f"Azure Artifacts version query not fully implemented (HTML parsing required). Falling back to git tags.")
-        return None
+        # Parse HTML to extract versions
+        parser = SimpleIndexParser(package_name)
+        try:
+            parser.feed(response.text)
+        except Exception as e:
+            logger.warning(f"Error parsing Azure Artifacts HTML for '{package_name}': {e}")
+            return None
+        
+        if not parser.versions:
+            logger.debug(f"No versions found in Azure Artifacts HTML for '{package_name}'")
+            return None
+        
+        # Find the latest version
+        versions = list(parser.versions)
+        logger.debug(f"Found {len(versions)} versions in Azure Artifacts: {versions}")
+        
+        # Sort versions to find the latest
+        try:
+            sorted_versions = sorted(versions, key=_parse_version_for_sort, reverse=True)
+            latest_version = sorted_versions[0]
+            logger.info(f"Found latest version {latest_version} on Azure Artifacts for '{package_name}'")
+            return latest_version
+        except Exception as e:
+            logger.warning(f"Error sorting versions for '{package_name}': {e}")
+            # Fallback: return the first version found
+            return versions[0]
+            
     except requests.RequestException as e:
         logger.warning(f"Network error querying Azure Artifacts for '{package_name}': {e}")
         return None

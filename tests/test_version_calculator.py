@@ -86,9 +86,22 @@ class TestQueryRegistryVersion:
 
     @patch("python_package_folder.version_calculator.requests.get")
     def test_query_azure_artifacts_version(self, mock_get: MagicMock) -> None:
-        """Test querying Azure Artifacts (basic support, returns None for now)."""
+        """Test querying Azure Artifacts with HTML parsing."""
         mock_response = Mock()
         mock_response.status_code = 200
+        # Simulate PEP 503 simple index HTML response
+        mock_response.text = """<!DOCTYPE html>
+<html>
+  <head>
+    <title>Links for test-package</title>
+  </head>
+  <body>
+    <h1>Links for test-package</h1>
+    <a href="test-package-0.1.0-py3-none-any.whl">test-package-0.1.0-py3-none-any.whl</a>
+    <a href="test-package-0.2.0-py3-none-any.whl">test-package-0.2.0-py3-none-any.whl</a>
+    <a href="test-package-0.1.5.tar.gz">test-package-0.1.5.tar.gz</a>
+  </body>
+</html>"""
         mock_get.return_value = mock_response
 
         version = query_registry_version(
@@ -96,7 +109,46 @@ class TestQueryRegistryVersion:
             "azure",
             repository_url="https://pkgs.dev.azure.com/ORG/PROJECT/_packaging/FEED/pypi/upload",
         )
-        # Azure Artifacts parsing not fully implemented, returns None
+        # Should parse HTML and return the latest version
+        assert version == "0.2.0"
+
+    @patch("python_package_folder.version_calculator.requests.get")
+    def test_query_azure_artifacts_version_not_found(self, mock_get: MagicMock) -> None:
+        """Test querying Azure Artifacts when package doesn't exist (404)."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_get.return_value = mock_response
+
+        version = query_registry_version(
+            "test-package",
+            "azure",
+            repository_url="https://pkgs.dev.azure.com/ORG/PROJECT/_packaging/FEED/pypi/upload",
+        )
+        # Should return None for 404 (first release)
+        assert version is None
+
+    @patch("python_package_folder.version_calculator.requests.get")
+    def test_query_azure_artifacts_version_empty_html(self, mock_get: MagicMock) -> None:
+        """Test querying Azure Artifacts with empty HTML (no versions)."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = """<!DOCTYPE html>
+<html>
+  <head>
+    <title>Links for test-package</title>
+  </head>
+  <body>
+    <h1>Links for test-package</h1>
+  </body>
+</html>"""
+        mock_get.return_value = mock_response
+
+        version = query_registry_version(
+            "test-package",
+            "azure",
+            repository_url="https://pkgs.dev.azure.com/ORG/PROJECT/_packaging/FEED/pypi/upload",
+        )
+        # Should return None when no versions found in HTML
         assert version is None
 
     @patch("python_package_folder.version_calculator.requests.get")
