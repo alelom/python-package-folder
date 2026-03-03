@@ -41,7 +41,7 @@ def resolve_version_via_semantic_release(
     package_name: str | None = None,
     repository: str | None = None,
     repository_url: str | None = None,
-) -> str | None:
+) -> tuple[str | None, str | None]:
     """
     Resolve the next version using semantic-release via Node.js script.
 
@@ -53,9 +53,11 @@ def resolve_version_via_semantic_release(
         repository_url: Optional repository URL (required for Azure Artifacts)
 
     Returns:
-        Version string if a release is determined, None if no release or error
+        Tuple of (version string if a release is determined, error message if any)
+        Returns (None, None) if no release or no error, (None, error_msg) on error
     """
-    # Check for Node.js availability upfront
+    # Note: Node.js availability should be checked before calling this function
+    # This check is a safety fallback
     if not check_node_available():
         if is_github_actions():
             error_msg = """Node.js is not available in this GitHub Actions workflow.
@@ -73,12 +75,11 @@ To fix this, add the following steps BEFORE running python-package-folder:
 
 Alternatively, provide --version explicitly to skip automatic version resolution."""
             print(f"Error: {error_msg}", file=sys.stderr)
+            return None, error_msg
         else:
-            print(
-                "Warning: Node.js not found. Cannot resolve version via semantic-release.",
-                file=sys.stderr,
-            )
-        return None
+            error_msg = "Node.js not found. Cannot resolve version via semantic-release."
+            print(f"Error: {error_msg}", file=sys.stderr)
+            return None, error_msg
 
     # Try to find the script in multiple locations:
     # 1. Project root / scripts (for development or when script is in repo)
@@ -127,7 +128,9 @@ Alternatively, provide --version explicitly to skip automatic version resolution
                     script_path = fallback_script
 
         if not script_path:
-            return None
+            error_msg = "Could not locate get-next-version.cjs script"
+            print(f"Error: {error_msg}", file=sys.stderr)
+            return None, error_msg
 
         # Build command arguments
         cmd = ["node", str(script_path), str(project_root)]
@@ -160,24 +163,25 @@ Alternatively, provide --version explicitly to skip automatic version resolution
         )
 
         if result.returncode != 0:
-            # Log error details for debugging
+            # Collect error details
+            error_details = []
             if result.stderr:
-                print(
-                    f"Warning: semantic-release version resolution failed: {result.stderr}",
-                    file=sys.stderr,
-                )
-            elif result.stdout:
-                print(
-                    f"Warning: semantic-release version resolution failed: {result.stdout}",
-                    file=sys.stderr,
-                )
-            return None
+                error_details.append(f"stderr: {result.stderr}")
+            if result.stdout:
+                error_details.append(f"stdout: {result.stdout}")
+            
+            error_msg = "semantic-release version resolution failed"
+            if error_details:
+                error_msg += f": {'; '.join(error_details)}"
+            
+            print(f"Error: {error_msg}", file=sys.stderr)
+            return None, error_msg
 
         version = result.stdout.strip()
         if version and version != "none":
-            return version
+            return version, None
 
-        return None
+        return None, None
     except FileNotFoundError:
         # Node.js not found (shouldn't happen if check_node_available() passed, but handle gracefully)
         if is_github_actions():
@@ -196,19 +200,16 @@ To fix this, add the following steps BEFORE running python-package-folder:
 
 Alternatively, provide --version explicitly to skip automatic version resolution."""
             print(f"Error: {error_msg}", file=sys.stderr)
+            return None, error_msg
         else:
-            print(
-                "Warning: Node.js not found. Cannot resolve version via semantic-release.",
-                file=sys.stderr,
-            )
-        return None
+            error_msg = "Node.js not found. Cannot resolve version via semantic-release."
+            print(f"Error: {error_msg}", file=sys.stderr)
+            return None, error_msg
     except Exception as e:
         # Other errors (e.g., permission issues, script not found)
-        print(
-            f"Warning: Error resolving version via semantic-release: {e}",
-            file=sys.stderr,
-        )
-        return None
+        error_msg = f"Error resolving version via semantic-release: {e}"
+        print(f"Error: {error_msg}", file=sys.stderr)
+        return None, error_msg
     finally:
         # Clean up temporary file if we extracted from zip/pex
         # This must be at function level to ensure cleanup even on early return
@@ -365,6 +366,46 @@ def main() -> int:
             # Version is needed for subfolder builds or when publishing main package
             if is_subfolder or args.publish:
                 print("No --version provided, attempting to resolve via semantic-release...")
+                
+                # Check Node.js availability upfront
+                if not check_node_available():
+                    if is_github_actions():
+                        error_msg = """Node.js is not available in this GitHub Actions workflow.
+
+To fix this, add the following steps BEFORE running python-package-folder:
+
+- name: Setup Node.js
+  uses: actions/setup-node@v4
+  with:
+    node-version: '20'
+
+- name: Install semantic-release
+  run: |
+    npm install -g semantic-release semantic-release-commit-filter
+
+Alternatively, provide --version explicitly to skip automatic version resolution."""
+                        print(f"Error: {error_msg}", file=sys.stderr)
+                    else:
+                        print(
+                            "Error: Node.js is not available. Cannot resolve version via semantic-release.",
+                            file=sys.stderr,
+                        )
+                        print(
+                            "Please install Node.js or provide --version explicitly.",
+                            file=sys.stderr,
+                        )
+                    return 1
+                
+                # Log that Node.js is available (for debugging)
+                node_version = subprocess.run(
+                    ["node", "--version"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if node_version.returncode == 0:
+                    print(f"Node.js detected: {node_version.stdout.strip()}")
+                
                 # Get repository info if publishing
                 repository = args.publish if args.publish else None
                 repository_url = args.repository_url if args.publish else None
@@ -376,7 +417,7 @@ def main() -> int:
                         " ", "-"
                     ).lower().strip("-")
                     subfolder_rel_path = src_dir.relative_to(project_root)
-                    resolved_version = resolve_version_via_semantic_release(
+                    resolved_version, error_details = resolve_version_via_semantic_release(
                         project_root,
                         subfolder_rel_path,
                         package_name,
@@ -398,7 +439,7 @@ def main() -> int:
                         except Exception:
                             pass
                     
-                    resolved_version = resolve_version_via_semantic_release(
+                    resolved_version, error_details = resolve_version_via_semantic_release(
                         project_root,
                         subfolder_path=None,
                         package_name=package_name_for_registry,
@@ -414,8 +455,11 @@ def main() -> int:
                         "This could mean:\n"
                         "  - No release is needed (no relevant commits)\n"
                         "  - semantic-release is not installed or configured\n"
-                        "  - Node.js is not available\n\n"
-                        "Please either:\n"
+                    )
+                    if error_details:
+                        error_msg += f"\nDetails: {error_details}\n"
+                    error_msg += (
+                        "\nPlease either:\n"
                         "  - Install semantic-release: npm install -g semantic-release"
                     )
                     if is_subfolder:
