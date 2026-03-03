@@ -239,10 +239,19 @@ class BuildManager:
                 )
 
             if not package_name:
-                # Derive package name from subfolder
-                package_name = (
+                # Derive package name from subfolder: {root_project_name}-{subfolder_name}
+                root_project_name = self._get_project_name()
+                subfolder_name = (
                     self.src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
                 )
+                
+                if root_project_name:
+                    # Normalize root project name (replace underscores/hyphens consistently)
+                    root_name_normalized = root_project_name.replace("_", "-").lower()
+                    package_name = f"{root_name_normalized}-{subfolder_name}"
+                else:
+                    # Fallback to just subfolder name if root project name not found
+                    package_name = subfolder_name
 
             print(
                 f"Detected subfolder build. Setting up package '{package_name}' version '{version}'..."
@@ -1191,13 +1200,23 @@ class BuildManager:
             captured_package_name = None
             if self._is_subfolder_build():
                 # We need to get the package name before run_build cleans up subfolder_config
-                if not package_name:
-                    # Derive from src_dir name (same logic as in prepare_build)
-                    captured_package_name = (
+                if package_name:
+                    # Use provided package name (from --package-name arg)
+                    captured_package_name = package_name
+                else:
+                    # Derive from root project name + src_dir name (same logic as in prepare_build)
+                    root_project_name = self._get_project_name()
+                    subfolder_name = (
                         self.src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
                     )
-                else:
-                    captured_package_name = package_name
+                    
+                    if root_project_name:
+                        # Normalize root project name (replace underscores/hyphens consistently)
+                        root_name_normalized = root_project_name.replace("_", "-").lower()
+                        captured_package_name = f"{root_name_normalized}-{subfolder_name}"
+                    else:
+                        # Fallback to just subfolder name if root project name not found
+                        captured_package_name = subfolder_name
 
             self.run_build(
                 build_command,
@@ -1223,10 +1242,19 @@ class BuildManager:
                     elif package_name:
                         publish_package_name = package_name
                     else:
-                        # Last resort: derive from src_dir name
-                        publish_package_name = (
+                        # Last resort: derive from root project name + src_dir name
+                        root_project_name = self._get_project_name()
+                        subfolder_name = (
                             self.src_dir.name.replace("_", "-").replace(" ", "-").lower().strip("-")
                         )
+                        
+                        if root_project_name:
+                            # Normalize root project name (replace underscores/hyphens consistently)
+                            root_name_normalized = root_project_name.replace("_", "-").lower()
+                            publish_package_name = f"{root_name_normalized}-{subfolder_name}"
+                        else:
+                            # Fallback to just subfolder name if root project name not found
+                            publish_package_name = subfolder_name
                     
                     # Log the package name being used for publishing
                     import logging

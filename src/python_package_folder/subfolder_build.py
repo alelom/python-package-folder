@@ -80,14 +80,46 @@ class SubfolderBuildConfig:
         self._exclude_temp_dir: Path | None = None
 
     def _derive_package_name(self) -> str:
-        """Derive package name from source directory name."""
+        """
+        Derive package name from root project name and source directory name.
+        
+        Format: {root_project_name}-{subfolder_name}
+        Falls back to just subfolder_name if root project name not found.
+        """
+        # Get root project name from pyproject.toml
+        root_project_name = None
+        pyproject_path = self.project_root / "pyproject.toml"
+        if pyproject_path.exists():
+            try:
+                if tomllib:
+                    with open(pyproject_path, "rb") as f:
+                        data = tomllib.load(f)
+                        root_project_name = data.get("project", {}).get("name")
+                else:
+                    # Fallback: simple string parsing
+                    content = pyproject_path.read_text(encoding="utf-8")
+                    for line in content.split("\n"):
+                        if line.strip().startswith("name ="):
+                            root_project_name = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            break
+            except Exception:
+                pass
+        
         # Use the directory name, replacing invalid characters
-        name = self.src_dir.name
+        subfolder_name = self.src_dir.name
         # Replace invalid characters with hyphens
-        name = name.replace("_", "-").replace(" ", "-").lower()
+        subfolder_name = subfolder_name.replace("_", "-").replace(" ", "-").lower()
         # Remove any leading/trailing hyphens
-        name = name.strip("-")
-        return name
+        subfolder_name = subfolder_name.strip("-")
+        
+        # Combine with root project name if available
+        if root_project_name:
+            # Normalize root project name (replace underscores/hyphens consistently)
+            root_name_normalized = root_project_name.replace("_", "-").lower()
+            return f"{root_name_normalized}-{subfolder_name}"
+        else:
+            # Fallback to just subfolder name
+            return subfolder_name
 
     def _get_package_structure(self) -> tuple[str, list[str]]:
         """

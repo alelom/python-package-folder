@@ -63,7 +63,7 @@ class TestSubfolderBuildConfig:
             version="1.0.0",
         )
 
-        assert config.package_name == "subfolder"
+        assert config.package_name == "test-package-subfolder"
         assert config.version == "1.0.0"
         assert config.dependency_group is None
 
@@ -104,7 +104,7 @@ class TestSubfolderBuildConfig:
         content = pyproject_path.read_text()
 
         # Check package name and version are set
-        assert 'name = "subfolder"' in content
+        assert 'name = "test-package-subfolder"' in content
         assert 'version = "2.0.0"' in content
 
         # Check dynamic versioning is removed
@@ -226,7 +226,7 @@ class TestSubfolderBuildConfig:
         ) as config:
             config.create_temp_pyproject()
             content = (test_project_with_pyproject / "pyproject.toml").read_text()
-            assert 'name = "subfolder"' in content
+            assert 'name = "test-package-subfolder"' in content
 
         # Check restore happened automatically
         restored_content = (test_project_with_pyproject / "pyproject.toml").read_text()
@@ -262,7 +262,7 @@ class TestSubfolderBuildConfig:
             config.create_temp_pyproject()
 
     def test_package_name_derivation(self, test_project_with_pyproject: Path) -> None:
-        """Test package name derivation from directory name."""
+        """Test package name derivation from root project name and directory name."""
         # Test with underscores
         subfolder = test_project_with_pyproject / "subfolder_to_build"
         subfolder.mkdir()
@@ -271,7 +271,7 @@ class TestSubfolderBuildConfig:
             src_dir=subfolder,
             version="1.0.0",
         )
-        assert config.package_name == "subfolder-to-build"
+        assert config.package_name == "test-package-subfolder-to-build"
 
         # Test with spaces
         subfolder2 = test_project_with_pyproject / "subfolder with spaces"
@@ -281,7 +281,24 @@ class TestSubfolderBuildConfig:
             src_dir=subfolder2,
             version="1.0.0",
         )
-        assert config2.package_name == "subfolder-with-spaces"
+        assert config2.package_name == "test-package-subfolder-with-spaces"
+    
+    def test_package_name_derivation_no_root_project(self, tmp_path: Path) -> None:
+        """Test package name derivation when root project name is not found (fallback)."""
+        # Create a project without pyproject.toml
+        project_root = tmp_path / "test_project_no_pyproject"
+        project_root.mkdir()
+        
+        subfolder = project_root / "subfolder"
+        subfolder.mkdir()
+        
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+        # Should fallback to just subfolder name when root project name not found
+        assert config.package_name == "subfolder"
 
 
 def test_readme_handling_with_existing_readme(test_project_with_pyproject: Path):
@@ -856,7 +873,7 @@ description = "Subfolder package"
         # Verify it was modified
         modified_content = (project_root / "pyproject.toml").read_text()
         assert modified_content != original_content
-        assert 'name = "subfolder"' in modified_content
+        assert 'name = "test-package-subfolder"' in modified_content
 
         # Restore
         config.restore()

@@ -30,6 +30,45 @@ logging.basicConfig(
 
 def is_github_actions() -> bool:
     """Check if running in GitHub Actions."""
+
+
+def _get_root_project_name(project_root: Path) -> str | None:
+    """
+    Get the root project name from pyproject.toml.
+    
+    Args:
+        project_root: Root directory of the project
+        
+    Returns:
+        Project name from pyproject.toml, or None if not found
+    """
+    pyproject_path = project_root / "pyproject.toml"
+    if not pyproject_path.exists():
+        return None
+    
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib
+        except ImportError:
+            tomllib = None
+    
+    try:
+        if tomllib:
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+                return data.get("project", {}).get("name")
+        else:
+            # Fallback: simple string parsing
+            content = pyproject_path.read_text(encoding="utf-8")
+            for line in content.split("\n"):
+                if line.strip().startswith("name ="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    
+    return None
     return os.getenv("GITHUB_ACTIONS") == "true"
 
 
@@ -204,16 +243,30 @@ def main() -> int:
                 if is_subfolder:
                     # Workflow 1: subfolder build
                     # src_dir is guaranteed to be relative to project_root due to is_subfolder check
-                    package_name = args.package_name or src_dir.name.replace("_", "-").replace(
-                        " ", "-"
-                    ).lower().strip("-")
+                    if args.package_name:
+                        package_name = args.package_name
+                    else:
+                        # Derive package name: {root_project_name}-{subfolder_name}
+                        root_project_name = _get_root_project_name(project_root)
+                        subfolder_name = src_dir.name.replace("_", "-").replace(
+                            " ", "-"
+                        ).lower().strip("-")
+                        
+                        if root_project_name:
+                            # Normalize root project name (replace underscores/hyphens consistently)
+                            root_name_normalized = root_project_name.replace("_", "-").lower()
+                            package_name = f"{root_name_normalized}-{subfolder_name}"
+                        else:
+                            # Fallback to just subfolder name if root project name not found
+                            package_name = subfolder_name
+                    
                     subfolder_rel_path = src_dir.relative_to(project_root)
                     
                     # Log the package name being used for version query
                     logger = logging.getLogger(__name__)
                     logger.info(
                         f"Querying registry for package name: '{package_name}' "
-                        f"(derived from src_dir: '{src_dir.name}', args.package_name: {args.package_name})"
+                        f"(derived from src_dir: '{src_dir.name}', root_project: {_get_root_project_name(project_root)}, args.package_name: {args.package_name})"
                     )
                     
                     resolved_version, error_details = resolve_version(
@@ -289,9 +342,22 @@ def main() -> int:
                 if is_subfolder:
                     from .subfolder_build import SubfolderBuildConfig
 
-                    package_name = args.package_name or src_dir.name.replace("_", "-").replace(
-                        " ", "-"
-                    ).lower().strip("-")
+                    if args.package_name:
+                        package_name = args.package_name
+                    else:
+                        # Derive package name: {root_project_name}-{subfolder_name}
+                        root_project_name = _get_root_project_name(project_root)
+                        subfolder_name = src_dir.name.replace("_", "-").replace(
+                            " ", "-"
+                        ).lower().strip("-")
+                        
+                        if root_project_name:
+                            # Normalize root project name (replace underscores/hyphens consistently)
+                            root_name_normalized = root_project_name.replace("_", "-").lower()
+                            package_name = f"{root_name_normalized}-{subfolder_name}"
+                        else:
+                            # Fallback to just subfolder name if root project name not found
+                            package_name = subfolder_name
                     subfolder_config = SubfolderBuildConfig(
                         project_root=project_root,
                         src_dir=src_dir,
