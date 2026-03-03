@@ -38,6 +38,7 @@ classifiers = [
 # ---- Main dependencies ----
 
 dependencies = [
+    "requests>=2.0.0",
 ]
 
 
@@ -88,10 +89,6 @@ local = false
 [tool.hatch.build.targets.wheel]
 # The source location for the package.
 packages = ["src/python_package_folder"]
-# Using a build hook to automatically include all files in the scripts directory
-# The build hook dynamically adds files to force_include, which works for both sdist and wheel builds
-[tool.hatch.build.hooks.custom]
-path = "src/python_package_folder/_hatch_build.py"
 
 
 

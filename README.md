@@ -55,7 +55,7 @@ cd src/api_package
 # Build and publish to TestPyPI with version 1.2.0
 python-package-folder --publish testpypi --version 1.2.0
 
-# Or publish to PyPI with automatic version resolution via semantic-release
+# Or publish to PyPI with automatic version resolution via conventional commits
 python-package-folder --publish pypi
 
 # Or publish to PyPI with a custom package name
@@ -152,12 +152,7 @@ uv add twine
 
 **For secure credential storage**: `keyring` is optional but recommended (install with `pip install keyring`)
 
-**For automatic version resolution**: When using `--version` optional mode (automatic version resolution via semantic-release), you'll need:
-- Node.js and npm (or npx)
-- semantic-release: `npm install -g semantic-release`
-- For subfolder builds: semantic-release-commit-filter: `npm install -g semantic-release-commit-filter`
-
-Alternatively, install these as devDependencies in your project's `package.json`.
+**For automatic version resolution**: The tool uses a Python-native implementation that requires no additional dependencies. It follows [Angular Commit Message Conventions](https://github.com/angular/angular/blob/main/contributing-docs/commit-message-guidelines.md) as used by [semantic-release](https://semantic-release.gitbook.io/semantic-release/).
 
 
 ## Quick Start
@@ -173,10 +168,10 @@ Useful for monorepos containing many subfolders that may need publishing as stan
 cd src/subfolder_to_build_and_publish
 
 # Build and publish any subdirectory of your repo to TestPyPi (https://test.pypi.org/)
-# Version can be provided explicitly or resolved automatically via semantic-release
+# Version can be provided explicitly or resolved automatically via conventional commits
 python-package-folder --publish testpypi --version 0.0.2
 
-# Or let semantic-release determine the next version automatically (requires semantic-release setup)
+# Or let the tool determine the next version automatically from conventional commits
 python-package-folder --publish testpypi
 
 # Only analyse (no building)
@@ -451,25 +446,39 @@ The `--version` option:
 **Version Format**: Versions must follow PEP 440 (e.g., `1.2.3`, `1.2.3a1`, `1.2.3.post1`, `1.2.3.dev1`)
 
 
-### Automatic Version Resolution (semantic-release)
+### Automatic Version Resolution
 
-When `--version` is not provided, the tool can automatically determine the next version using semantic-release. This requires Node.js, npm, and semantic-release to be installed.
+When `--version` is not provided, the tool automatically determines the next version using conventional commits. This is a **Python-native implementation** that follows the same conventions as [semantic-release](https://semantic-release.gitbook.io/semantic-release/) using the Angular preset, but requires no Node.js dependencies.
+
+**Version Resolution Flow:**
+
+```mermaid
+flowchart TD
+    Start[Version Resolution] --> QueryRegistry[Query Registry<br/>PyPI/Azure/etc]
+    QueryRegistry -->|Success| UseRegistry[Use Registry Version]
+    QueryRegistry -->|Failure| QueryGitTags[Query Git Tags<br/>v1.2.3 or package-v1.2.3]
+    UseRegistry --> GetCommits[Get Commits Since Baseline<br/>filter by subfolder path]
+    QueryGitTags --> GetCommits
+    GetCommits --> ParseCommits[Parse Conventional Commits<br/>feat/fix/perf/BREAKING CHANGE]
+    ParseCommits --> DetermineBump[Determine Bump Type<br/>major/minor/patch]
+    DetermineBump --> CalculateVersion[Calculate Next Version<br/>baseline + bump]
+    CalculateVersion --> End[Return Version]
+```
 
 **Version Detection:**
 - **Baseline version**:
   - **Registry Query (Preferred)**: When publishing to a repository (PyPI, TestPyPI, or Azure Artifacts), the tool queries the target registry for the latest published version and uses it as the baseline for version calculation. This ensures version calculations are based on what's actually published, not just git tags.
   - **Git Tags (Fallback)**: If the package doesn't exist on the registry yet (first release) or if registry query fails, the tool falls back to using git tags to determine the starting version.
-- **New version to publish**: After determining the baseline version, [`semantic-release`](https://semantic-release.gitbook.io/semantic-release/) analyzes commits since that version to calculate the next version bump (major, minor, or patch) based on [_conventional commit_](https://www.conventionalcommits.org/en/v1.0.0/) messages.
+- **New version to publish**: After determining the baseline version, the tool analyzes commits since that version to calculate the next version bump (major, minor, or patch) based on [conventional commit](https://www.conventionalcommits.org/en/v1.0.0/) messages.
 
 **For subfolder builds (Workflow 1):**
 - Uses per-package tags: `{package-name}-v{version}` (e.g., `my-package-v1.2.3`)
 - Queries the target registry for the latest published version of the subfolder package
-- Filters commits to only those affecting the subfolder path
+- Filters commits to only those affecting the subfolder path using native Python git commands
 - **Commit filtering behavior**: Only commits that modify files within the subfolder path are considered for version calculation. Commits that only target files outside the subfolder are excluded. For example:
   - `fix: update my_subfolder/foo.py` → **Included** (affects subfolder)
   - `feat: add feature to other_package/bar.py` → **Excluded** (doesn't affect subfolder)
   - `fix: update my_subfolder/baz.py and shared/utils.py` → **Included** (affects subfolder, even if it also touches files outside)
-- Requires `semantic-release-commit-filter` plugin
 
 **For main package builds (Workflow 2):**
 - Uses repo-level tags: `v{version}` (e.g., `v1.2.3`)
@@ -481,14 +490,38 @@ When `--version` is not provided, the tool can automatically determine the next 
 - **TestPyPI**: Fully supported via JSON API (`https://test.pypi.org/pypi/{package-name}/json`)
 - **Azure Artifacts**: Basic support with fallback to git tags. Azure Artifacts uses a different API format and may require authentication, so if the query fails, the tool automatically falls back to git tags.
 
-**Setup:**
-```bash
-# Install semantic-release globally
-npm install -g semantic-release
+**Supported Commit Types:**
 
-# For subfolder builds, also install semantic-release-commit-filter
-npm install -g semantic-release-commit-filter
-```
+This implementation follows [Angular Commit Message Conventions](https://github.com/angular/angular/blob/main/contributing-docs/commit-message-guidelines.md) as used by [semantic-release](https://semantic-release.gitbook.io/semantic-release/). All commit types are recognized, but only certain types trigger version bumps:
+
+**Version Bump Types:**
+- `feat:` → **Minor** (new feature)
+  - Example: `feat: add user authentication`
+  - Example: `feat(api): add new endpoint`
+- `fix:` → **Patch** (bug fix)
+  - Example: `fix: resolve memory leak in data processor`
+  - Example: `fix(parser): handle empty input correctly`
+- `perf:` → **Patch** (performance improvement)
+  - Example: `perf: optimize database queries`
+  - Example: `perf(cache): reduce cache lookup time`
+- **Breaking changes** (any type with `!` or `BREAKING CHANGE:` footer) → **Major**
+  - Example: `feat!: remove deprecated API`
+  - Example: `feat(api)!: change response format`
+  - Example: `fix: update dependency\n\nBREAKING CHANGE: minimum Python version is now 3.11`
+
+**Ignored Types** (no version bump):
+- `docs:` - Documentation only changes
+- `style:` - Code style changes (formatting, missing semicolons, etc.)
+- `refactor:` - Code refactoring (neither fixes a bug nor adds a feature)
+- `test:` - Adding or updating tests
+- `build:` - Changes to build system or external dependencies
+- `ci:` - Changes to CI configuration files and scripts
+- `chore:` - Other changes that don't modify src or test files
+- `revert:` - Reverts a previous commit
+
+**Breaking Change Detection:**
+- `BREAKING CHANGE:` in commit footer/body (case-insensitive)
+- `!` after type/scope: `feat!:`, `fix!:`, `feat(scope)!:`, etc.
 
 **Usage:**
 ```bash
@@ -501,8 +534,8 @@ python-package-folder --publish pypi
 ```
 
 **Requirements:**
-- Conventional commits (e.g., `fix:`, `feat:`, `BREAKING CHANGE:`) are required for semantic-release to determine version bumps
-- The tool will fall back to requiring `--version` explicitly if semantic-release is not available or determines no release is needed
+- Conventional commits (e.g., `fix:`, `feat:`, `BREAKING CHANGE:`) are required for version calculation
+- The tool will fall back to requiring `--version` explicitly if no baseline version is found or no relevant commits are detected
 
 ### Subfolder Versioning
 
@@ -513,7 +546,7 @@ When building from a subdirectory (not the main `src/` directory), the tool auto
 cd my_project/subfolder_to_build
 python-package-folder --version "1.0.0" --publish pypi
 
-# Or let semantic-release determine the version automatically
+# Or let the tool determine the version automatically from conventional commits
 python-package-folder --publish pypi
 
 # With custom package name
@@ -524,8 +557,8 @@ For subfolder builds:
 - **Automatic detection**: The tool automatically detects subfolder builds
 - **Version resolution**: 
   - If `--version` is provided: Uses the explicit version
-  - If `--version` is omitted: Attempts to resolve via semantic-release (requires setup)
-  - If semantic-release is unavailable or determines no release: Requires `--version` explicitly
+  - If `--version` is omitted: Attempts to resolve via conventional commits
+  - If no baseline version is found or no relevant commits: Requires `--version` explicitly
 - **pyproject.toml handling**:
   - If `pyproject.toml` exists in subfolder: Uses that file (copied to project root temporarily)
   - If no `pyproject.toml` in subfolder: Creates temporary one with correct package structure
@@ -737,7 +770,7 @@ options:
   --skip-existing       Skip files that already exist on the repository
   --version VERSION     Set a specific version before building (PEP 440 format).
                         Optional: if omitted, version will be resolved via
-                        semantic-release (requires Node.js and semantic-release setup).
+                        conventional commits when needed.
   --package-name PACKAGE_NAME
                         Package name for subfolder builds (default: derived from
                         source directory name)

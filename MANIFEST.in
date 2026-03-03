@@ -1,2 +1,0 @@
-include src/python_package_folder/scripts/get-next-version.cjs
-recursive-include src/python_package_folder/scripts *.cjs
