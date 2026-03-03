@@ -820,6 +820,7 @@ def parse_commit_for_bump(commit_message: str) -> str | None:
 def calculate_next_version(
     baseline_version: str,
     commits: list[str],
+    auto_bump_minor: bool = False,
 ) -> str | None:
     """
     Calculate next version from baseline and commits.
@@ -827,11 +828,21 @@ def calculate_next_version(
     Args:
         baseline_version: Current baseline version (e.g., "1.2.3")
         commits: List of commit messages since baseline
+        auto_bump_minor: If True and no conventional commits found, bump minor version
 
     Returns:
         Next version string or None if no changes require a version bump
     """
     if not commits:
+        # If no commits and auto_bump_minor is enabled, bump minor version
+        if auto_bump_minor:
+            try:
+                parts = baseline_version.split(".")
+                major = int(parts[0])
+                minor = int(parts[1]) if len(parts) > 1 else 0
+                return f"{major}.{minor + 1}.0"
+            except (ValueError, IndexError):
+                return None
         return None
 
     # Parse each commit to determine bump type
@@ -842,6 +853,16 @@ def calculate_next_version(
             bump_types.append(bump)
 
     if not bump_types:
+        # No conventional commits found
+        # If auto_bump_minor is enabled, bump minor version
+        if auto_bump_minor:
+            try:
+                parts = baseline_version.split(".")
+                major = int(parts[0])
+                minor = int(parts[1]) if len(parts) > 1 else 0
+                return f"{major}.{minor + 1}.0"
+            except (ValueError, IndexError):
+                return None
         return None
 
     # Determine highest bump (major > minor > patch)
@@ -975,7 +996,9 @@ def resolve_version(
 
     # Step 5: Calculate next version
     logger.info(f"Calculating next version from baseline {baseline_version} and {len(commits)} commits")
-    next_version = calculate_next_version(baseline_version, commits)
+    # Auto-bump minor version if no conventional commits found (but baseline exists)
+    auto_bump_minor = baseline_version is not None and baseline_version != "0.0.0"
+    next_version = calculate_next_version(baseline_version, commits, auto_bump_minor=auto_bump_minor)
 
     if next_version:
         logger.info(f"Calculated next version: {next_version}")
