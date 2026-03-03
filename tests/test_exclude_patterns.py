@@ -184,3 +184,31 @@ class TestExcludePatternsInBuild:
         assert ".*_test.*" in content
 
         config.restore()
+
+    def test_exclude_patterns_no_subfolder_toml(self, test_project_with_exclude_patterns: Path) -> None:
+        """Test that exclude patterns are read correctly when there's no subfolder pyproject.toml."""
+        project_root = test_project_with_exclude_patterns
+        src_dir = project_root / "src" / "test_package"
+
+        # This simulates the scenario where there's no subfolder pyproject.toml
+        # and we need to read exclude patterns from the root before it's moved
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=src_dir,
+            package_name="test-package",
+            version="1.0.0",
+        )
+
+        # Create temporary pyproject.toml (this will read exclude patterns before moving root toml)
+        temp_pyproject = config.create_temp_pyproject()
+        assert temp_pyproject is not None
+
+        # Check that exclude patterns are in the temporary pyproject.toml
+        content = temp_pyproject.read_text()
+        assert "[tool.python-package-folder]" in content
+        assert "exclude-patterns" in content
+        assert "_SS" in content
+        assert ".*_test.*" in content
+        assert "sandbox" in content
+
+        config.restore()

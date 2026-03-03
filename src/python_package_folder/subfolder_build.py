@@ -357,6 +357,13 @@ class SubfolderBuildConfig:
 
         original_content = original_pyproject.read_text(encoding="utf-8")
 
+        # Read exclude patterns from root pyproject.toml BEFORE moving the file
+        exclude_patterns = read_exclude_patterns(original_pyproject)
+        print(
+            f"INFO: Read exclude patterns from {original_pyproject}: {exclude_patterns}",
+            file=sys.stderr,
+        )
+
         # Store reference to original
         self.original_pyproject_path = original_pyproject
 
@@ -390,13 +397,6 @@ class SubfolderBuildConfig:
                     f"Warning: Dependency group '{self.dependency_group}' not found in parent pyproject.toml",
                     file=sys.stderr,
                 )
-
-        # Read exclude patterns from root pyproject.toml
-        exclude_patterns = read_exclude_patterns(original_pyproject)
-        print(
-            f"INFO: Read exclude patterns from {original_pyproject}: {exclude_patterns}",
-            file=sys.stderr,
-        )
 
         if data:
             # Modify using parsed data
