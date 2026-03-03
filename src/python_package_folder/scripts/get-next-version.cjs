@@ -378,20 +378,32 @@ function getGlobalNpmPaths() {
     let semanticRelease;
     try {
       const semanticReleasePath = require.resolve('semantic-release', { paths: resolvePaths });
-      semanticRelease = require(semanticReleasePath);
+      const semanticReleaseModule = require(semanticReleasePath);
+      // Handle both CommonJS and ES module exports
+      semanticRelease = typeof semanticReleaseModule === 'function' 
+        ? semanticReleaseModule 
+        : semanticReleaseModule.default || semanticReleaseModule;
     } catch (resolveError) {
       try {
         // Try with just global paths
         if (globalNpmPaths.length > 0) {
           const semanticReleasePath = require.resolve('semantic-release', { paths: globalNpmPaths });
-          semanticRelease = require(semanticReleasePath);
+          const semanticReleaseModule = require(semanticReleasePath);
+          // Handle both CommonJS and ES module exports
+          semanticRelease = typeof semanticReleaseModule === 'function' 
+            ? semanticReleaseModule 
+            : semanticReleaseModule.default || semanticReleaseModule;
         } else {
           throw resolveError;
         }
       } catch (globalError) {
         try {
           // Final fallback: default require (should work if in NODE_PATH or default locations)
-          semanticRelease = require('semantic-release');
+          const semanticReleaseModule = require('semantic-release');
+          // Handle both CommonJS and ES module exports
+          semanticRelease = typeof semanticReleaseModule === 'function' 
+            ? semanticReleaseModule 
+            : semanticReleaseModule.default || semanticReleaseModule;
         } catch (e) {
           console.error('Error: semantic-release is not installed.');
           console.error('Please install it with: npm install -g semantic-release');
@@ -403,6 +415,16 @@ function getGlobalNpmPaths() {
           process.exit(1);
         }
       }
+    }
+    
+    // Verify semanticRelease is a function
+    if (typeof semanticRelease !== 'function') {
+      console.error('Error: semantic-release module is not a function.');
+      console.error(`Debug: semanticRelease type: ${typeof semanticRelease}`);
+      if (semanticRelease && typeof semanticRelease === 'object') {
+        console.error(`Debug: semanticRelease keys: ${Object.keys(semanticRelease).join(', ')}`);
+      }
+      process.exit(1);
     }
 
     // For subfolder builds, semantic-release-commit-filter will be loaded by semantic-release
