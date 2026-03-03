@@ -8,6 +8,7 @@ repositories including PyPI, PyPI Test, and Azure Artifacts.
 from __future__ import annotations
 
 import getpass
+import os
 import subprocess
 import sys
 from enum import Enum
@@ -17,6 +18,18 @@ try:
     import keyring
 except ImportError:
     keyring = None
+
+
+def _is_non_interactive() -> bool:
+    """Check if running in a non-interactive environment (CI/CD)."""
+    # Check for common CI environment variables
+    ci_vars = ["GITHUB_ACTIONS", "CI", "CONTINUOUS_INTEGRATION", "TF_BUILD"]
+    if any(os.getenv(var) for var in ci_vars):
+        return True
+    # Check if stdin is not a TTY (non-interactive)
+    if not sys.stdin.isatty():
+        return True
+    return False
 
 
 class Repository(Enum):
@@ -112,9 +125,9 @@ class Publisher:
         """
         Get credentials for publishing.
 
-        Always prompts for username and password/token if not already provided.
-        Does not use keyring to store/retrieve credentials - credentials must be
-        provided via command-line arguments or will be prompted each time.
+        Prompts for username and password/token if not already provided.
+        In non-interactive environments (CI/CD), checks environment variables
+        or raises an error if credentials are missing.
 
         Returns:
             Tuple of (username, password/token)
@@ -122,21 +135,54 @@ class Publisher:
         username = self.username
         password = self.password
 
-        # Always prompt if not provided via command-line arguments
-        # We don't use keyring to avoid storing credentials
-        if not username:
-            username = input(f"Enter username for {self.repository.value}: ").strip()
-            if not username:
-                raise ValueError("Username is required")
+        is_non_interactive_env = _is_non_interactive()
 
-        if not password:
-            if self.repository == Repository.AZURE:
-                prompt = f"Enter Azure Artifacts token for {username}: "
+        # Get username
+        if not username:
+            if is_non_interactive_env:
+                # Check environment variables
+                username = os.getenv("TWINE_USERNAME") or os.getenv("PYPI_USERNAME")
+                if not username:
+                    raise ValueError(
+                        f"Username is required for publishing to {self.repository.value} in CI/CD. "
+                        "Please provide --username argument or set TWINE_USERNAME/PYPI_USERNAME environment variable."
+                    )
             else:
-                prompt = f"Enter PyPI token for {username} (or __token__ for API token): "
-            password = getpass.getpass(prompt)
-            if not password:
-                raise ValueError("Password/token is required")
+                username = input(f"Enter username for {self.repository.value}: ").strip()
+                if not username:
+                    raise ValueError("Username is required")
+
+        # Get password
+        if not password:
+            if is_non_interactive_env:
+                # Check environment variables (common names used by twine and CI/CD)
+                password = (
+                    os.getenv("TWINE_PASSWORD")
+                    or os.getenv("PYPI_PASSWORD")
+                    or os.getenv("AZURE_ARTIFACTS_TOKEN")  # For Azure
+                )
+                if not password:
+                    raise ValueError(
+                        f"Password/token is required for publishing to {self.repository.value} in CI/CD. "
+                        "Please provide --password argument or set one of: "
+                        "TWINE_PASSWORD, PYPI_PASSWORD, or AZURE_ARTIFACTS_TOKEN environment variable."
+                    )
+            else:
+                if self.repository == Repository.AZURE:
+                    prompt = f"Enter Azure Artifacts token for {username}: "
+                else:
+                    prompt = f"Enter PyPI token for {username} (or __token__ for API token): "
+                try:
+                    password = getpass.getpass(prompt)
+                except (EOFError, OSError):
+                    # Handle non-interactive environments gracefully
+                    raise ValueError(
+                        f"Password/token is required for publishing to {self.repository.value}. "
+                        "Cannot prompt for password in non-interactive environment. "
+                        "Please provide --password argument or set TWINE_PASSWORD/PYPI_PASSWORD environment variable."
+                    )
+                if not password:
+                    raise ValueError("Password/token is required")
 
         # Auto-detect if password is an API token and adjust username
         if password.startswith("pypi-") or password.startswith("pypi_Ag"):
