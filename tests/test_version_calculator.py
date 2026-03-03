@@ -414,14 +414,22 @@ class TestResolveVersion:
 
     @patch("python_package_folder.version_calculator.query_registry_version")
     @patch("python_package_folder.version_calculator.get_latest_git_tag")
+    @patch("python_package_folder.version_calculator.subprocess.run")
     def test_resolve_version_no_baseline(
         self,
+        mock_subprocess: MagicMock,
         mock_git_tag: MagicMock,
         mock_registry: MagicMock,
     ) -> None:
-        """Test error when no baseline version is found."""
+        """Test first release behavior when no baseline version is found."""
         mock_registry.return_value = None
         mock_git_tag.return_value = None
+        
+        # Mock git log for first release with conventional commits
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "feat: initial feature\n\n"
+        mock_subprocess.return_value = mock_result
 
         version, error = resolve_version(
             Path("/tmp/test"),
@@ -429,9 +437,9 @@ class TestResolveVersion:
             repository="pypi",
         )
 
-        assert version is None
-        assert error is not None
-        assert "baseline version" in error.lower()
+        # For first release with feat commit, should calculate 0.1.0 (0.0.0 + minor)
+        assert version == "0.1.0"
+        assert error is None
 
     @patch("python_package_folder.version_calculator.query_registry_version")
     @patch("python_package_folder.version_calculator.get_commits_since")

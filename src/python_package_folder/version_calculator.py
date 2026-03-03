@@ -471,14 +471,54 @@ def resolve_version(
     if not baseline_version:
         baseline_version = get_latest_git_tag(project_root, package_name, is_subfolder)
 
-    # Step 3: If still no baseline, we can't calculate next version
+    # Step 3: If still no baseline, this is likely the first release
+    # Default to 0.0.0 as the starting version (standard semantic-release behavior)
     if not baseline_version:
-        # This could be the first release - we'd need to decide on a starting version
-        # For now, return None to indicate we can't determine the version
-        return None, "No baseline version found (no registry version or git tags)"
-
-    # Step 4: Get commits since baseline
-    commits = get_commits_since(project_root, baseline_version, subfolder_path, package_name)
+        baseline_version = "0.0.0"
+        # For first release, get all commits (no baseline to compare against)
+        # Use HEAD as the reference point to get all commits
+        try:
+            cmd = ["git", "log", "--format=%B", "HEAD"]
+            if subfolder_path:
+                # Convert to relative path from project root
+                if subfolder_path.is_absolute():
+                    rel_path = subfolder_path.relative_to(project_root)
+                else:
+                    rel_path = subfolder_path
+                cmd.append("--")
+                cmd.append(str(rel_path))
+            
+            result = subprocess.run(
+                cmd,
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            
+            commits = []
+            if result.returncode == 0:
+                # Split commits (they're separated by double newlines in --format=%B)
+                current_commit = []
+                for line in result.stdout.split("\n"):
+                    if line.strip() == "" and current_commit:
+                        commit_msg = "\n".join(current_commit).strip()
+                        if commit_msg:
+                            commits.append(commit_msg)
+                        current_commit = []
+                    else:
+                        current_commit.append(line)
+                
+                # Don't forget the last commit if there's no trailing newline
+                if current_commit:
+                    commit_msg = "\n".join(current_commit).strip()
+                    if commit_msg:
+                        commits.append(commit_msg)
+        except Exception:
+            commits = []
+    else:
+        # Step 4: Get commits since baseline
+        commits = get_commits_since(project_root, baseline_version, subfolder_path, package_name)
 
     # Step 5: Calculate next version
     next_version = calculate_next_version(baseline_version, commits)
@@ -487,4 +527,8 @@ def resolve_version(
         return next_version, None
     else:
         # No relevant commits for version bump
+        # For first release (0.0.0), default to 0.1.0 if there are any commits
+        if baseline_version == "0.0.0" and commits:
+            # Even if commits don't match conventional format, start at 0.1.0 for first release
+            return "0.1.0", None
         return None, None
