@@ -88,8 +88,10 @@ local = false
 [tool.hatch.build.targets.wheel]
 # The source location for the package.
 packages = ["src/python_package_folder"]
-# Using a build hook to automatically include all files in the scripts directory
-# This avoids duplicates while being sustainable for future file additions
+# Include the scripts directory in the wheel
+# Using force-include to ensure get-next-version.cjs is included
+force-include = { "src/python_package_folder/scripts/get-next-version.cjs" = "python_package_folder/scripts/get-next-version.cjs" }
+# Also keep the build hook as a fallback (though force-include should work)
 [tool.hatch.build.hooks.custom]
 path = "src/python_package_folder/_hatch_build.py"
 
