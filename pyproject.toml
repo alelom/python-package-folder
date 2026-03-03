@@ -176,7 +176,5 @@ testpaths = [
     "src",
     "tests",
 ]
-# Ignore build hooks - they're not test files and require hatchling which isn't in test deps
-ignore = ["_hatch_build.py"]
 norecursedirs = []
 filterwarnings = []

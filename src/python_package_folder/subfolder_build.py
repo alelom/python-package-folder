@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -75,6 +76,8 @@ class SubfolderBuildConfig:
         self.temp_readme: Path | None = None
         self.original_readme_backup: Path | None = None
         self._used_subfolder_pyproject = False
+        self._excluded_files: list[tuple[Path, Path]] = []  # List of (original_path, temp_path) tuples
+        self._exclude_temp_dir: Path | None = None
 
     def _derive_package_name(self) -> str:
         """Derive package name from source directory name."""
@@ -205,80 +208,13 @@ class SubfolderBuildConfig:
         has_build_system = any(line.strip().startswith("[build-system]") for line in result)
         if not has_build_system:
             # Insert build-system at the very beginning of the file
-            # Include python-package-folder in requires so the build hook is available
             build_system_lines = [
                 "[build-system]",
-                'requires = ["hatchling", "python-package-folder"]',
+                'requires = ["hatchling"]',
                 'build-backend = "hatchling.build"',
                 "",
             ]
             result = build_system_lines + result
-        else:
-            # Ensure python-package-folder is in requires for build hook availability
-            in_build_system = False
-            for i, line in enumerate(result):
-                if line.strip().startswith("[build-system]"):
-                    in_build_system = True
-                elif in_build_system and line.strip().startswith("requires"):
-                    # Check if python-package-folder is already in requires
-                    if "python-package-folder" not in line:
-                        # Add python-package-folder to requires
-                        if "]" in line:
-                            # Single-line requires
-                            result[i] = line.rstrip().rstrip("]") + ', "python-package-folder"]'
-                        else:
-                            # Multi-line requires, find the closing bracket
-                            for j in range(i + 1, len(result)):
-                                if "]" in result[j]:
-                                    # Insert before closing
-                                    # Determine indentation from the previous line (last item in list)
-                                    if j > i + 1:
-                                        # Look at the previous line to get indentation
-                                        prev_line = result[j - 1]
-                                        # Extract leading whitespace from previous line
-                                        indent = len(prev_line) - len(prev_line.lstrip())
-                                        indent_str = " " * indent
-                                    else:
-                                        # Fallback: use standard 4-space indent
-                                        indent_str = "    "
-                                    result.insert(j, f'{indent_str}"python-package-folder",')
-                                    break
-                    break
-                elif in_build_system and line.strip().startswith("[") and not line.strip().startswith("[build-system"):
-                    # End of build-system section
-                    break
-
-        # Register the build hook to enable exclude patterns
-        build_hook_registered = any(
-            "[tool.hatch.build.hooks.custom]" in line for line in result
-        )
-        if not build_hook_registered:
-            # Add build hook registration after [tool.hatch.build.targets.wheel] section
-            hook_insert_index = len(result)
-            for i, line in enumerate(result):
-                if line.strip().startswith("[tool.hatch.build.targets.wheel]"):
-                    # Find the end of this section
-                    for j in range(i + 1, len(result)):
-                        if result[j].strip().startswith("[") and not result[j].strip().startswith(
-                            "[tool.hatch.build.targets"
-                        ):
-                            hook_insert_index = j
-                            break
-                    if hook_insert_index == len(result):
-                        # Insert after packages line if section continues
-                        for j in range(i + 1, len(result)):
-                            if result[j].strip().startswith("["):
-                                hook_insert_index = j
-                                break
-                    break
-
-            # Insert build hook registration
-            hook_lines = [
-                "",
-                "[tool.hatch.build.hooks.custom]",
-                'path = "python_package_folder._hatch_build:CustomBuildHook"',
-            ]
-            result[hook_insert_index:hook_insert_index] = hook_lines
 
         # Ensure hatch build section exists if packages path is needed
         if not packages_set and correct_packages_path:
@@ -390,6 +326,10 @@ class SubfolderBuildConfig:
             # Handle README file
             self._handle_readme()
 
+            # Exclude files matching exclude patterns
+            if exclude_patterns:
+                self._exclude_files_by_patterns(exclude_patterns)
+
             return original_pyproject
 
         # No pyproject.toml in subfolder, create one from parent
@@ -496,6 +436,10 @@ class SubfolderBuildConfig:
 
         # Handle README file
         self._handle_readme()
+
+        # Exclude files matching exclude patterns
+        if exclude_patterns:
+            self._exclude_files_by_patterns(exclude_patterns)
 
         return original_pyproject
 
@@ -637,54 +581,13 @@ class SubfolderBuildConfig:
         has_build_system = any(line.strip().startswith("[build-system]") for line in result)
         if not has_build_system:
             # Insert build-system at the very beginning of the file
-            # Include python-package-folder in requires so the build hook is available
             build_system_lines = [
                 "[build-system]",
-                'requires = ["hatchling", "python-package-folder"]',
+                'requires = ["hatchling"]',
                 'build-backend = "hatchling.build"',
                 "",
             ]
             result = build_system_lines + result
-        else:
-            # Ensure python-package-folder is in requires for build hook availability
-            in_build_system = False
-            requires_modified = False
-            for i, line in enumerate(result):
-                if line.strip().startswith("[build-system]"):
-                    in_build_system = True
-                elif in_build_system and line.strip().startswith("requires"):
-                    # Check if python-package-folder is already in requires
-                    if "python-package-folder" not in line:
-                        # Add python-package-folder to requires
-                        if "]" in line:
-                            # Single-line requires (may have closing bracket on same line)
-                            if line.strip().endswith("]"):
-                                result[i] = line.rstrip().rstrip("]") + ', "python-package-folder"]'
-                            else:
-                                # Closing bracket might be on same line but not at end
-                                result[i] = line.rstrip().rstrip("]") + ', "python-package-folder"]'
-                        else:
-                            # Multi-line requires, find the closing bracket
-                            for j in range(i + 1, len(result)):
-                                if "]" in result[j]:
-                                    # Insert before closing
-                                    # Determine indentation from the previous line (last item in list)
-                                    if j > i + 1:
-                                        # Look at the previous line to get indentation
-                                        prev_line = result[j - 1]
-                                        # Extract leading whitespace from previous line
-                                        indent = len(prev_line) - len(prev_line.lstrip())
-                                        indent_str = " " * indent
-                                    else:
-                                        # Fallback: use standard 4-space indent
-                                        indent_str = "    "
-                                    result.insert(j, f'{indent_str}"python-package-folder",')
-                                    break
-                        requires_modified = True
-                    break
-                elif in_build_system and line.strip().startswith("[") and not line.strip().startswith("[build-system"):
-                    # End of build-system section
-                    break
 
         # Ensure packages is always set for subfolder builds
         if not packages_set and package_dirs:
@@ -694,50 +597,6 @@ class SubfolderBuildConfig:
                 result.append("[tool.hatch.build.targets.wheel]")
             packages_str = ", ".join(f'"{p}"' for p in package_dirs)
             result.append(f"packages = [{packages_str}]")
-
-        # Register the build hook to enable exclude patterns
-        # Always register the build hook if exclude patterns are present, or if we want to support them
-        # Check if build hook is already registered
-        build_hook_registered = any(
-            "[tool.hatch.build.hooks.custom]" in line for line in result
-        )
-
-        if not build_hook_registered:
-            # Add build hook registration after [tool.hatch.build.targets.wheel] section
-            hook_insert_index = len(result)
-            wheel_section_found = False
-            for i, line in enumerate(result):
-                if line.strip().startswith("[tool.hatch.build.targets.wheel]"):
-                    wheel_section_found = True
-                    # Find the end of this section
-                    for j in range(i + 1, len(result)):
-                        if result[j].strip().startswith("[") and not result[j].strip().startswith(
-                            "[tool.hatch.build.targets"
-                        ):
-                            hook_insert_index = j
-                            break
-                    if hook_insert_index == len(result):
-                        # Insert after packages line if section continues
-                        for j in range(i + 1, len(result)):
-                            if result[j].strip().startswith("["):
-                                hook_insert_index = j
-                                break
-                    break
-
-            # If wheel section not found, insert before sdist section or at end
-            if not wheel_section_found:
-                for i, line in enumerate(result):
-                    if line.strip().startswith("[tool.hatch.build.targets.sdist]"):
-                        hook_insert_index = i
-                        break
-
-            # Insert build hook registration
-            hook_lines = [
-                "",
-                "[tool.hatch.build.hooks.custom]",
-                'path = "python_package_folder._hatch_build:CustomBuildHook"',
-            ]
-            result[hook_insert_index:hook_insert_index] = hook_lines
 
         # Use only-include for source distributions to ensure only the subfolder is included
         # This prevents including files from the project root
@@ -1106,6 +965,110 @@ class SubfolderBuildConfig:
             target_readme.write_text(readme_content, encoding="utf-8")
             self.temp_readme = target_readme
 
+    def _exclude_files_by_patterns(self, exclude_patterns: list[str]) -> None:
+        """
+        Temporarily move files matching exclude patterns out of the source directory.
+
+        Files are moved to a temporary directory and will be restored in restore().
+        This ensures excluded files are not included in the build.
+
+        Args:
+            exclude_patterns: List of regex patterns to match against path components
+        """
+        if not exclude_patterns:
+            return
+
+        # Compile regex patterns for efficiency
+        compiled_patterns = [re.compile(pattern) for pattern in exclude_patterns]
+
+        def should_exclude(path: Path) -> bool:
+            """Check if a path should be excluded based on patterns."""
+            # Check each component of the path
+            for part in path.parts:
+                # Check if any part matches any pattern
+                for pattern in compiled_patterns:
+                    if pattern.search(part):
+                        return True
+            return False
+
+        # Create temporary directory for excluded files
+        if self._exclude_temp_dir is None:
+            self._exclude_temp_dir = Path(tempfile.mkdtemp(prefix="python-package-folder-excluded-"))
+
+        # Find all files and directories in src_dir that match exclude patterns
+        excluded_items: list[Path] = []
+        
+        # Walk through src_dir and find matching items
+        # Sort by depth (shallow first) so we can skip children of excluded directories
+        all_items = sorted(self.src_dir.rglob("*"), key=lambda p: len(p.parts))
+        
+        for item in all_items:
+            # Skip if already excluded (parent was excluded)
+            if any(
+                excluded.is_dir() and (item == excluded or item.is_relative_to(excluded))
+                for excluded in excluded_items
+            ):
+                continue
+            
+            # Check if this item should be excluded
+            try:
+                rel_path = item.relative_to(self.src_dir)
+                if should_exclude(rel_path):
+                    excluded_items.append(item)
+            except ValueError:
+                # Path is not relative to src_dir, skip
+                continue
+
+        # Move excluded items to temporary directory
+        for item in excluded_items:
+            try:
+                # Calculate relative path from src_dir
+                rel_path = item.relative_to(self.src_dir)
+                # Create corresponding path in temp directory
+                temp_path = self._exclude_temp_dir / rel_path
+                # Create parent directories if needed
+                temp_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Move the item
+                if item.exists():
+                    shutil.move(str(item), str(temp_path))
+                    self._excluded_files.append((item, temp_path))
+                    print(f"Excluded {rel_path} from build", file=sys.stderr)
+            except Exception as e:
+                print(
+                    f"Warning: Could not exclude {item}: {e}",
+                    file=sys.stderr,
+                )
+
+    def _restore_excluded_files(self) -> None:
+        """Restore files that were excluded by _exclude_files_by_patterns."""
+        # Restore files in reverse order (to handle nested directories correctly)
+        for original_path, temp_path in reversed(self._excluded_files):
+            try:
+                if temp_path.exists():
+                    # Ensure parent directory exists
+                    original_path.parent.mkdir(parents=True, exist_ok=True)
+                    # Move back
+                    shutil.move(str(temp_path), str(original_path))
+            except Exception as e:
+                print(
+                    f"Warning: Could not restore excluded file {original_path}: {e}",
+                    file=sys.stderr,
+                )
+
+        # Clean up temporary directory
+        if self._exclude_temp_dir and self._exclude_temp_dir.exists():
+            try:
+                shutil.rmtree(self._exclude_temp_dir)
+            except Exception as e:
+                print(
+                    f"Warning: Could not remove temporary exclude directory {self._exclude_temp_dir}: {e}",
+                    file=sys.stderr,
+                )
+
+        self._excluded_files.clear()
+        self._exclude_temp_dir = None
+
     def restore(self) -> None:
         """
         Restore the original pyproject.toml and remove temporary __init__.py if created.
@@ -1115,6 +1078,9 @@ class SubfolderBuildConfig:
         This method removes the temporary pyproject.toml and restores the original from
         the backup location, ensuring the original file is never modified.
         """
+        # Restore excluded files first
+        self._restore_excluded_files()
+
         # Remove temporary __init__.py if we created it
         if self._temp_init_created:
             init_file = self.src_dir / "__init__.py"
