@@ -1,5 +1,28 @@
 # API Reference
 
+## Configuration
+
+### Exclude Patterns
+
+You can configure exclude patterns in `pyproject.toml` to prevent folders and files from being included in published packages (wheel/sdist). Patterns are matched using regex against any path component (directory or file name).
+
+```toml
+[tool.python-package-folder]
+exclude-patterns = ["_SS", "__SS", ".*_test.*", "sandbox"]
+```
+
+**Pattern Matching:**
+- Patterns are regex strings that match against any path component
+- If any component in a path matches any pattern, the entire path is excluded
+- Examples:
+  - `"_SS"` - Matches any path component containing `_SS` (e.g., `data_storage/_SS/...`)
+  - `".*_test.*"` - Matches any path component containing `_test` (e.g., `my_test_file.py`, `test_data/`)
+  - `"sandbox"` - Matches any path component containing `sandbox`
+
+**Subfolder Builds:**
+- Exclude patterns from the root `pyproject.toml` are automatically applied to subfolder builds
+- Patterns are injected into the temporary `pyproject.toml` created for subfolder builds
+
 ## Command Line Options
 
 ```

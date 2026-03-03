@@ -46,6 +46,7 @@
    - Subfolder-specific package name (derived or custom)
    - Specified version
    - Correct package path for hatchling
+   - Exclude patterns from root `pyproject.toml` (if configured)
 6. **Build Execution**: Runs build command with all dependencies in place
 7. **Cleanup**: Restores original `pyproject.toml` and removes temporary `__init__.py`
 
@@ -113,6 +114,15 @@ python-package-folder --version "1.0.0" --dependency-group "dev" --publish pypi
 ```
 
 The specified dependency group will be copied from the parent `pyproject.toml`'s `[dependency-groups]` section into the temporary `pyproject.toml` used for the subfolder build.
+
+**Exclude Patterns**: You can configure exclude patterns in the root `pyproject.toml` to prevent certain folders/files from being included in published packages:
+
+```toml
+[tool.python-package-folder]
+exclude-patterns = ["_SS", "__SS", ".*_test.*"]
+```
+
+These patterns are automatically applied to both main package builds and subfolder builds. Patterns use regex matching against any path component (directory or file name). See the [API Reference](REFERENCE.md#exclude-patterns) for more details.
 
 ## Python API Usage
 

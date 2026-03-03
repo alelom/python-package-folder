@@ -24,6 +24,8 @@ except ImportError:
     except ImportError:
         tomllib = None
 
+from .utils import read_exclude_patterns
+
 
 class SubfolderBuildConfig:
     """
@@ -288,6 +290,11 @@ class SubfolderBuildConfig:
             subfolder_content = subfolder_pyproject.read_text(encoding="utf-8")
             # Adjust packages path to be relative to project root
             adjusted_content = self._adjust_subfolder_pyproject_packages_path(subfolder_content)
+            
+            # Read exclude patterns from root pyproject.toml and inject them
+            exclude_patterns = read_exclude_patterns(original_pyproject)
+            if exclude_patterns:
+                adjusted_content = self._inject_exclude_patterns(adjusted_content, exclude_patterns)
 
             # Write adjusted content to temporary file
             temp_pyproject_path.write_text(adjusted_content, encoding="utf-8")
@@ -373,6 +380,9 @@ class SubfolderBuildConfig:
                     file=sys.stderr,
                 )
 
+        # Read exclude patterns from root pyproject.toml
+        exclude_patterns = read_exclude_patterns(original_pyproject)
+
         if data:
             # Modify using parsed data
             if "project" in data:
@@ -394,12 +404,12 @@ class SubfolderBuildConfig:
 
             # For now, use string manipulation (tomli-w not in stdlib)
             modified_content = self._modify_pyproject_string(
-                original_content, parent_dependency_group
+                original_content, parent_dependency_group, exclude_patterns
             )
         else:
             # Use string manipulation
             modified_content = self._modify_pyproject_string(
-                original_content, parent_dependency_group
+                original_content, parent_dependency_group, exclude_patterns
             )
 
         # Write the modified content to a temporary file
@@ -423,7 +433,10 @@ class SubfolderBuildConfig:
         return original_pyproject
 
     def _modify_pyproject_string(
-        self, content: str, dependency_group: dict[str, list[str]] | None = None
+        self,
+        content: str,
+        dependency_group: dict[str, list[str]] | None = None,
+        exclude_patterns: list[str] | None = None,
     ) -> str:
         """Modify pyproject.toml content using string manipulation."""
         lines = content.split("\n")
@@ -635,7 +648,111 @@ class SubfolderBuildConfig:
                     dep_lines.append("]")
                 result[insert_index:insert_index] = dep_lines
 
+        # Add exclude patterns if specified
+        if exclude_patterns:
+            # Find where to insert [tool.python-package-folder] section
+            # Usually after [dependency-groups] or at the end
+            insert_index = len(result)
+            tool_section_exists = False
+            for i, line in enumerate(result):
+                if line.strip() == "[tool.python-package-folder]":
+                    tool_section_exists = True
+                    insert_index = i
+                    break
+                elif line.strip().startswith("[tool.") and i > 0:
+                    # Insert before other tool sections
+                    insert_index = i
+                    break
+
+            # Format exclude patterns
+            patterns_str = ", ".join(f'"{p}"' for p in exclude_patterns)
+            exclude_lines = [
+                "",
+                "[tool.python-package-folder]",
+                f'exclude-patterns = [{patterns_str}]',
+            ]
+
+            if tool_section_exists:
+                # Replace or update existing section
+                end_index = insert_index + 1
+                while end_index < len(result) and not result[end_index].strip().startswith("["):
+                    end_index += 1
+                # Check if exclude-patterns already exists
+                has_exclude_patterns = any(
+                    "exclude-patterns" in result[i] for i in range(insert_index, end_index)
+                )
+                if has_exclude_patterns:
+                    # Update existing exclude-patterns line
+                    for i in range(insert_index, end_index):
+                        if "exclude-patterns" in result[i]:
+                            result[i] = f'exclude-patterns = [{patterns_str}]'
+                            break
+                else:
+                    # Add exclude-patterns to existing section
+                    result.insert(end_index - 1, f'exclude-patterns = [{patterns_str}]')
+            else:
+                # Insert new section
+                result[insert_index:insert_index] = exclude_lines
+
         return "\n".join(result)
+
+    def _inject_exclude_patterns(self, content: str, exclude_patterns: list[str]) -> str:
+        """
+        Inject exclude patterns into pyproject.toml content.
+
+        Adds or updates [tool.python-package-folder] exclude-patterns section.
+
+        Args:
+            content: pyproject.toml content
+            exclude_patterns: List of exclude patterns to inject
+
+        Returns:
+            Modified pyproject.toml content with exclude patterns
+        """
+        if not exclude_patterns:
+            return content
+
+        lines = content.split("\n")
+        result = []
+        tool_section_exists = False
+        tool_section_index = -1
+        tool_section_end = -1
+
+        # Find [tool.python-package-folder] section
+        for i, line in enumerate(lines):
+            if line.strip() == "[tool.python-package-folder]":
+                tool_section_exists = True
+                tool_section_index = i
+                # Find end of section
+                for j in range(i + 1, len(lines)):
+                    if lines[j].strip().startswith("["):
+                        tool_section_end = j
+                        break
+                if tool_section_end == -1:
+                    tool_section_end = len(lines)
+                break
+
+        if tool_section_exists:
+            # Update existing section
+            patterns_str = ", ".join(f'"{p}"' for p in exclude_patterns)
+            has_exclude_patterns = False
+            for i in range(tool_section_index + 1, tool_section_end):
+                if "exclude-patterns" in lines[i]:
+                    # Update existing line
+                    lines[i] = f'exclude-patterns = [{patterns_str}]'
+                    has_exclude_patterns = True
+                    break
+            if not has_exclude_patterns:
+                # Add exclude-patterns to existing section
+                lines.insert(tool_section_end, f'exclude-patterns = [{patterns_str}]')
+            return "\n".join(lines)
+        else:
+            # Add new section at the end
+            patterns_str = ", ".join(f'"{p}"' for p in exclude_patterns)
+            lines.append("")
+            lines.append("[tool.python-package-folder]")
+            lines.append(f'exclude-patterns = [{patterns_str}]')
+            return "\n".join(lines)
 
     def add_third_party_dependencies(self, dependencies: list[str]) -> None:
         """

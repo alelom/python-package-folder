@@ -6,6 +6,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib
+    except ImportError:
+        tomllib = None
+
 
 def find_project_root(start_path: Path | None = None) -> Path | None:
     """
@@ -106,3 +114,64 @@ def is_python_package_directory(path: Path) -> bool:
         return True
 
     return False
+
+
+def read_exclude_patterns(pyproject_path: Path) -> list[str]:
+    """
+    Read exclude patterns from pyproject.toml.
+
+    Reads the exclude-patterns configuration from [tool.python-package-folder] section.
+    Returns an empty list if the section or option doesn't exist.
+
+    Args:
+        pyproject_path: Path to the pyproject.toml file
+
+    Returns:
+        List of exclude patterns (regex strings), or empty list if not found
+    """
+    if not pyproject_path.exists():
+        return []
+
+    try:
+        if tomllib:
+            content = pyproject_path.read_text(encoding="utf-8")
+            data = tomllib.loads(content)
+            tool_section = data.get("tool", {})
+            tool_config = tool_section.get("python-package-folder", {})
+            # TOML keys with hyphens are preserved as-is
+            patterns = tool_config.get("exclude-patterns", [])
+            if isinstance(patterns, list):
+                return [str(p) for p in patterns]
+            return []
+        else:
+            # Fallback: simple string parsing
+            content = pyproject_path.read_text(encoding="utf-8")
+            in_section = False
+            patterns = []
+            for line in content.split("\n"):
+                stripped = line.strip()
+                if stripped == "[tool.python-package-folder]":
+                    in_section = True
+                    continue
+                elif stripped.startswith("[") and in_section:
+                    # Moved to a different section
+                    break
+                elif in_section and stripped.startswith("exclude-patterns"):
+                    # Parse the array
+                    if "=" in stripped:
+                        value = stripped.split("=", 1)[1].strip()
+                        # Simple parsing for array of strings
+                        if value.startswith("[") and value.endswith("]"):
+                            # Remove brackets and split
+                            items = value[1:-1].split(",")
+                            for item in items:
+                                item = item.strip().strip('"').strip("'")
+                                if item:
+                                    patterns.append(item)
+                            break
+            return patterns
+    except Exception:
+        # If parsing fails, return empty list
+        return []
+
+    return []
