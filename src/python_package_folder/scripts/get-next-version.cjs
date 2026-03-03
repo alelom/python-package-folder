@@ -26,6 +26,7 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const http = require('http');
+const { execSync } = require('child_process');
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -310,48 +311,102 @@ async function queryRegistryVersion(packageName, repository, repositoryUrl) {
   return null;
 }
 
+/**
+ * Get global npm prefix for module resolution.
+ * This helps find globally installed npm packages.
+ * @returns {string|null} Path to global node_modules or null if not found
+ */
+function getGlobalNpmPrefix() {
+  try {
+    // Get npm's global prefix (where global packages are installed)
+    const prefix = execSync('npm config get prefix', { encoding: 'utf8' }).trim();
+    // Global node_modules is typically at <prefix>/lib/node_modules
+    const globalNodeModules = path.join(prefix, 'lib', 'node_modules');
+    if (fs.existsSync(globalNodeModules)) {
+      return globalNodeModules;
+    }
+    // Alternative location on some systems
+    const altGlobalNodeModules = path.join(prefix, 'node_modules');
+    if (fs.existsSync(altGlobalNodeModules)) {
+      return altGlobalNodeModules;
+    }
+    return null;
+  } catch (e) {
+    // If npm config fails, try to find it via NODE_PATH or common locations
+    return null;
+  }
+}
+
 // Main execution
 (async () => {
   try {
-    // Try to require semantic-release
-    // First try resolving from project root (for devDependencies), then fall back to global
-    let semanticRelease;
-  try {
-    const semanticReleasePath = require.resolve('semantic-release', { paths: [projectRoot] });
-    semanticRelease = require(semanticReleasePath);
-  } catch (resolveError) {
-    try {
-      semanticRelease = require('semantic-release');
-    } catch (e) {
-      console.error('Error: semantic-release is not installed.');
-      console.error('Please install it with: npm install -g semantic-release');
-      console.error('Or install it as a devDependency: npm install --save-dev semantic-release');
-      if (isSubfolderBuild) {
-        console.error('For subfolder builds, also install: npm install -g semantic-release-commit-filter');
-        console.error('Or as devDependency: npm install --save-dev semantic-release-commit-filter');
-      }
-      process.exit(1);
+    // Get global npm path for module resolution
+    const globalNpmPath = getGlobalNpmPrefix();
+    const resolvePaths = [projectRoot];
+    if (globalNpmPath) {
+      resolvePaths.push(globalNpmPath);
     }
-  }
-
-  // For subfolder builds, require semantic-release-commit-filter
-  // (required only to verify it's installed; the plugin is used via options.plugins)
-  // First try resolving from project root (for devDependencies), then fall back to global
-  if (isSubfolderBuild) {
+    
+    // Try to require semantic-release
+    // First try resolving from project root (for devDependencies), then try global, then fall back to default
+    let semanticRelease;
     try {
-      const commitFilterPath = require.resolve('semantic-release-commit-filter', { paths: [projectRoot] });
-      require(commitFilterPath);
+      const semanticReleasePath = require.resolve('semantic-release', { paths: resolvePaths });
+      semanticRelease = require(semanticReleasePath);
     } catch (resolveError) {
       try {
-        require('semantic-release-commit-filter');
-      } catch (e) {
-        console.error('Error: semantic-release-commit-filter is not installed.');
-        console.error('Please install it with: npm install -g semantic-release-commit-filter');
-        console.error('Or install it as a devDependency: npm install --save-dev semantic-release-commit-filter');
-        process.exit(1);
+        // Try with just global path
+        if (globalNpmPath) {
+          const semanticReleasePath = require.resolve('semantic-release', { paths: [globalNpmPath] });
+          semanticRelease = require(semanticReleasePath);
+        } else {
+          throw resolveError;
+        }
+      } catch (globalError) {
+        try {
+          // Final fallback: default require (should work if in NODE_PATH or default locations)
+          semanticRelease = require('semantic-release');
+        } catch (e) {
+          console.error('Error: semantic-release is not installed.');
+          console.error('Please install it with: npm install -g semantic-release');
+          console.error('Or install it as a devDependency: npm install --save-dev semantic-release');
+          if (isSubfolderBuild) {
+            console.error('For subfolder builds, also install: npm install -g semantic-release-commit-filter');
+            console.error('Or as devDependency: npm install --save-dev semantic-release-commit-filter');
+          }
+          process.exit(1);
+        }
       }
     }
-  }
+
+    // For subfolder builds, require semantic-release-commit-filter
+    // (required only to verify it's installed; the plugin is used via options.plugins)
+    if (isSubfolderBuild) {
+      try {
+        const commitFilterPath = require.resolve('semantic-release-commit-filter', { paths: resolvePaths });
+        require(commitFilterPath);
+      } catch (resolveError) {
+        try {
+          // Try with just global path
+          if (globalNpmPath) {
+            const commitFilterPath = require.resolve('semantic-release-commit-filter', { paths: [globalNpmPath] });
+            require(commitFilterPath);
+          } else {
+            throw resolveError;
+          }
+        } catch (globalError) {
+          try {
+            // Final fallback: default require
+            require('semantic-release-commit-filter');
+          } catch (e) {
+            console.error('Error: semantic-release-commit-filter is not installed.');
+            console.error('Please install it with: npm install -g semantic-release-commit-filter');
+            console.error('Or install it as a devDependency: npm install --save-dev semantic-release-commit-filter');
+            process.exit(1);
+          }
+        }
+      }
+    }
 
   // Query registry for latest version if repository info is provided
   let registryVersion = null;
