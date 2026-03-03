@@ -211,4 +211,60 @@ class TestExcludePatternsInBuild:
         assert ".*_test.*" in content
         assert "sandbox" in content
 
+        # Verify there's only ONE [tool.python-package-folder] section (no duplicates)
+        sections = [line for line in content.split("\n") if line.strip() == "[tool.python-package-folder]"]
+        assert len(sections) == 1, f"Found {len(sections)} duplicate [tool.python-package-folder] sections"
+
+        config.restore()
+
+    def test_exclude_patterns_no_duplicate_section(self, tmp_path: Path) -> None:
+        """Test that exclude patterns don't create duplicate sections when original already has it."""
+        project_root = tmp_path / "test_project"
+        project_root.mkdir()
+
+        # Create pyproject.toml with existing [tool.python-package-folder] section
+        pyproject_content = """[project]
+name = "test-package"
+version = "0.1.0"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/test_package"]
+
+[tool.python-package-folder]
+exclude-patterns = ["_SS", ".*_test.*"]
+
+[tool.pylint.'TYPECHECK']
+generated-members = ["networkx.*"]
+"""
+        (project_root / "pyproject.toml").write_text(pyproject_content)
+
+        # Create source directory
+        src_dir = project_root / "src" / "test_package"
+        src_dir.mkdir(parents=True)
+        (src_dir / "__init__.py").write_text("")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=src_dir,
+            package_name="test-package",
+            version="1.0.0",
+        )
+
+        # Create temporary pyproject.toml
+        temp_pyproject = config.create_temp_pyproject()
+        assert temp_pyproject is not None
+
+        # Check that there's only ONE [tool.python-package-folder] section
+        content = temp_pyproject.read_text()
+        sections = [line for line in content.split("\n") if line.strip() == "[tool.python-package-folder]"]
+        assert len(sections) == 1, f"Found {len(sections)} duplicate [tool.python-package-folder] sections: {sections}"
+
+        # Verify exclude-patterns is present
+        assert "exclude-patterns" in content
+        assert "_SS" in content
+
         config.restore()

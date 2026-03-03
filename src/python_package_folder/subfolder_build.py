@@ -694,44 +694,55 @@ class SubfolderBuildConfig:
             # Usually after [dependency-groups] or at the end
             insert_index = len(result)
             tool_section_exists = False
+            tool_section_start = -1
+            tool_section_end = -1
+            
+            # First, search specifically for [tool.python-package-folder]
             for i, line in enumerate(result):
                 if line.strip() == "[tool.python-package-folder]":
                     tool_section_exists = True
-                    insert_index = i
+                    tool_section_start = i
+                    # Find end of section (next [section] or end of file)
+                    for j in range(i + 1, len(result)):
+                        if result[j].strip().startswith("["):
+                            tool_section_end = j
+                            break
+                    if tool_section_end == -1:
+                        tool_section_end = len(result)
                     break
-                elif line.strip().startswith("[tool.") and i > 0:
-                    # Insert before other tool sections
-                    insert_index = i
-                    break
+            
+            # If not found, find a good insertion point before other [tool.*] sections
+            if not tool_section_exists:
+                for i, line in enumerate(result):
+                    if line.strip().startswith("[tool.") and i > 0:
+                        # Insert before other tool sections
+                        insert_index = i
+                        break
 
             # Format exclude patterns
             patterns_str = ", ".join(f'"{p}"' for p in exclude_patterns)
-            exclude_lines = [
-                "",
-                "[tool.python-package-folder]",
-                f'exclude-patterns = [{patterns_str}]',
-            ]
 
             if tool_section_exists:
-                # Replace or update existing section
-                end_index = insert_index + 1
-                while end_index < len(result) and not result[end_index].strip().startswith("["):
-                    end_index += 1
-                # Check if exclude-patterns already exists
-                has_exclude_patterns = any(
-                    "exclude-patterns" in result[i] for i in range(insert_index, end_index)
-                )
-                if has_exclude_patterns:
-                    # Update existing exclude-patterns line
-                    for i in range(insert_index, end_index):
-                        if "exclude-patterns" in result[i]:
-                            result[i] = f'exclude-patterns = [{patterns_str}]'
-                            break
-                else:
-                    # Add exclude-patterns to existing section
-                    result.insert(end_index - 1, f'exclude-patterns = [{patterns_str}]')
+                # Update existing section
+                # Check if exclude-patterns already exists in the section
+                has_exclude_patterns = False
+                for i in range(tool_section_start + 1, tool_section_end):
+                    if "exclude-patterns" in result[i]:
+                        has_exclude_patterns = True
+                        # Update the existing line
+                        result[i] = f'exclude-patterns = [{patterns_str}]'
+                        break
+                
+                if not has_exclude_patterns:
+                    # Add exclude-patterns to existing section (before the next section)
+                    result.insert(tool_section_end, f'exclude-patterns = [{patterns_str}]')
             else:
                 # Insert new section
+                exclude_lines = [
+                    "",
+                    "[tool.python-package-folder]",
+                    f'exclude-patterns = [{patterns_str}]',
+                ]
                 result[insert_index:insert_index] = exclude_lines
 
         return "\n".join(result)
