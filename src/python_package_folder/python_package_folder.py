@@ -216,6 +216,27 @@ def main() -> int:
 
         # Resolve version via conventional commits if not provided and needed
         resolved_version = args.version
+        
+        # Derive package name for subfolder builds (used for both version resolution and publishing)
+        derived_package_name = None
+        if is_subfolder:
+            if args.package_name:
+                derived_package_name = args.package_name
+            else:
+                # Derive package name: {root_project_name}-{subfolder_name}
+                root_project_name = _get_root_project_name(project_root)
+                subfolder_name = src_dir.name.replace("_", "-").replace(
+                    " ", "-"
+                ).lower().strip("-")
+                
+                if root_project_name:
+                    # Normalize root project name (replace underscores/hyphens consistently)
+                    root_name_normalized = root_project_name.replace("_", "-").lower()
+                    derived_package_name = f"{root_name_normalized}-{subfolder_name}"
+                else:
+                    # Fallback to just subfolder name if root project name not found
+                    derived_package_name = subfolder_name
+        
         if not resolved_version and not args.analyze_only:
             # Version is needed for subfolder builds or when publishing main package
             if is_subfolder or args.publish:
@@ -243,35 +264,18 @@ def main() -> int:
                 if is_subfolder:
                     # Workflow 1: subfolder build
                     # src_dir is guaranteed to be relative to project_root due to is_subfolder check
-                    if args.package_name:
-                        package_name = args.package_name
-                    else:
-                        # Derive package name: {root_project_name}-{subfolder_name}
-                        root_project_name = _get_root_project_name(project_root)
-                        subfolder_name = src_dir.name.replace("_", "-").replace(
-                            " ", "-"
-                        ).lower().strip("-")
-                        
-                        if root_project_name:
-                            # Normalize root project name (replace underscores/hyphens consistently)
-                            root_name_normalized = root_project_name.replace("_", "-").lower()
-                            package_name = f"{root_name_normalized}-{subfolder_name}"
-                        else:
-                            # Fallback to just subfolder name if root project name not found
-                            package_name = subfolder_name
-                    
                     subfolder_rel_path = src_dir.relative_to(project_root)
                     
                     # Log the package name being used for version query
                     logger = logging.getLogger(__name__)
                     logger.info(
-                        f"Querying registry for package name: '{package_name}' "
+                        f"Querying registry for package name: '{derived_package_name}' "
                         f"(derived from src_dir: '{src_dir.name}', root_project: {_get_root_project_name(project_root)}, args.package_name: {args.package_name})"
                     )
                     
                     resolved_version, error_details = resolve_version(
                         project_root,
-                        package_name=package_name,
+                        package_name=derived_package_name,
                         subfolder_path=subfolder_rel_path,
                         repository=repository,
                         repository_url=repository_url,
@@ -332,7 +336,7 @@ def main() -> int:
                 skip_existing=args.skip_existing,
                 version=args.version,
                 restore_versioning=not args.no_restore_versioning,
-                package_name=args.package_name,
+                package_name=derived_package_name if is_subfolder else args.package_name,
                 dependency_group=args.dependency_group,
             )
         else:
@@ -342,7 +346,10 @@ def main() -> int:
                 if is_subfolder:
                     from .subfolder_build import SubfolderBuildConfig
 
-                    if args.package_name:
+                    # Use derived_package_name if available, otherwise derive it again
+                    if derived_package_name is not None:
+                        package_name = derived_package_name
+                    elif args.package_name:
                         package_name = args.package_name
                     else:
                         # Derive package name: {root_project_name}-{subfolder_name}
