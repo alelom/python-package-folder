@@ -661,7 +661,7 @@ class TestSubfolderBuildTemporaryPyprojectCreation:
 
         # Verify build-system section is added (required for hatchling)
         assert "[build-system]" in content
-        assert 'requires = ["hatchling"]' in content
+        assert 'requires = ["hatchling", "python-package-folder"]' in content
         assert 'build-backend = "hatchling.build"' in content
         assert "[tool.hatch.version]" not in content
         assert "[tool.uv-dynamic-versioning]" not in content
@@ -894,7 +894,7 @@ description = "Subfolder package"
 
             # Verify build-system section uses hatchling, not setuptools
             assert "[build-system]" in content
-            assert 'requires = ["hatchling"]' in content
+            assert 'requires = ["hatchling", "python-package-folder"]' in content
             assert 'build-backend = "hatchling.build"' in content
             assert "setuptools" not in content or 'build-backend = "setuptools' not in content
 
@@ -929,7 +929,7 @@ description = "Subfolder package"
 
         # Verify build-system section is added
         assert "[build-system]" in content
-        assert 'requires = ["hatchling"]' in content
+        assert 'requires = ["hatchling", "python-package-folder"]' in content
         assert 'build-backend = "hatchling.build"' in content
 
         config.restore()
