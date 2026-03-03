@@ -458,6 +458,10 @@ When `--version` is not provided, the tool can automatically determine the next 
 **For subfolder builds (Workflow 1):**
 - Uses per-package tags: `{package-name}-v{version}` (e.g., `my-package-v1.2.3`)
 - Filters commits to only those affecting the subfolder path
+- **Commit filtering behavior**: Only commits that modify files within the subfolder path are considered for version calculation. Commits that only target files outside the subfolder are excluded. For example:
+  - `fix: update my_subfolder/foo.py` → **Included** (affects subfolder)
+  - `feat: add feature to other_package/bar.py` → **Excluded** (doesn't affect subfolder)
+  - `fix: update my_subfolder/baz.py and shared/utils.py` → **Included** (affects subfolder, even if it also touches files outside)
 - Requires `semantic-release-commit-filter` plugin
 
 **For main package builds (Workflow 2):**
