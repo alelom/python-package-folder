@@ -10,6 +10,8 @@ It can be invoked via:
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +23,16 @@ except ImportError:
 
 from .manager import BuildManager
 from .utils import find_project_root, find_source_directory
+
+
+def is_github_actions() -> bool:
+    """Check if running in GitHub Actions."""
+    return os.getenv("GITHUB_ACTIONS") == "true"
+
+
+def check_node_available() -> bool:
+    """Check if Node.js is available."""
+    return shutil.which("node") is not None
 
 
 def resolve_version_via_semantic_release(
@@ -43,6 +55,31 @@ def resolve_version_via_semantic_release(
     Returns:
         Version string if a release is determined, None if no release or error
     """
+    # Check for Node.js availability upfront
+    if not check_node_available():
+        if is_github_actions():
+            error_msg = """Node.js is not available in this GitHub Actions workflow.
+
+To fix this, add the following steps BEFORE running python-package-folder:
+
+- name: Setup Node.js
+  uses: actions/setup-node@v4
+  with:
+    node-version: '20'
+
+- name: Install semantic-release
+  run: |
+    npm install -g semantic-release semantic-release-commit-filter
+
+Alternatively, provide --version explicitly to skip automatic version resolution."""
+            print(f"Error: {error_msg}", file=sys.stderr)
+        else:
+            print(
+                "Warning: Node.js not found. Cannot resolve version via semantic-release.",
+                file=sys.stderr,
+            )
+        return None
+
     # Try to find the script in multiple locations:
     # 1. Project root / scripts (for development or when script is in repo)
     # 2. Package installation directory / scripts (for installed package)
@@ -142,11 +179,28 @@ def resolve_version_via_semantic_release(
 
         return None
     except FileNotFoundError:
-        # Node.js not found
-        print(
-            "Warning: Node.js not found. Cannot resolve version via semantic-release.",
-            file=sys.stderr,
-        )
+        # Node.js not found (shouldn't happen if check_node_available() passed, but handle gracefully)
+        if is_github_actions():
+            error_msg = """Node.js is not available in this GitHub Actions workflow.
+
+To fix this, add the following steps BEFORE running python-package-folder:
+
+- name: Setup Node.js
+  uses: actions/setup-node@v4
+  with:
+    node-version: '20'
+
+- name: Install semantic-release
+  run: |
+    npm install -g semantic-release semantic-release-commit-filter
+
+Alternatively, provide --version explicitly to skip automatic version resolution."""
+            print(f"Error: {error_msg}", file=sys.stderr)
+        else:
+            print(
+                "Warning: Node.js not found. Cannot resolve version via semantic-release.",
+                file=sys.stderr,
+            )
         return None
     except Exception as e:
         # Other errors (e.g., permission issues, script not found)
