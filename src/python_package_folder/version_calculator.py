@@ -10,11 +10,14 @@ Reference: https://semantic-release.gitbook.io/semantic-release/
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 from pathlib import Path
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 def query_registry_version(
@@ -38,13 +41,26 @@ def query_registry_version(
 
     try:
         if repository in ("pypi", "testpypi"):
-            return _query_pypi_version(package_name, repository)
+            logger.info(f"Querying {repository} for package '{package_name}'")
+            version = _query_pypi_version(package_name, repository)
+            if version:
+                logger.info(f"Found version {version} on {repository}")
+            else:
+                logger.info(f"Package '{package_name}' not found on {repository} (first release)")
+            return version
         elif repository == "azure":
             if not repository_url:
+                logger.warning("Azure Artifacts repository URL not provided")
                 return None
-            return _query_azure_artifacts_version(package_name, repository_url)
-    except Exception:
-        # Log error but don't fail - fall back to git tags
+            logger.info(f"Querying Azure Artifacts for package '{package_name}' at {repository_url}")
+            version = _query_azure_artifacts_version(package_name, repository_url)
+            if version:
+                logger.info(f"Found version {version} on Azure Artifacts")
+            else:
+                logger.info(f"Could not retrieve version from Azure Artifacts for '{package_name}' (will fall back to git tags)")
+            return version
+    except Exception as e:
+        logger.warning(f"Error querying {repository} for package '{package_name}': {e}", exc_info=True)
         return None
 
     return None
@@ -68,6 +84,7 @@ def _query_pypi_version(package_name: str, registry: str) -> str | None:
         response = requests.get(url, timeout=10)
         if response.status_code == 404:
             # Package doesn't exist yet (first release)
+            logger.debug(f"Package '{package_name}' not found on {registry} (404)")
             return None
         if response.status_code == 200:
             json_data = response.json()
@@ -80,9 +97,16 @@ def _query_pypi_version(package_name: str, registry: str) -> str | None:
                     # Sort versions and get latest
                     versions = sorted(releases.keys(), key=_parse_version_for_sort)
                     version = versions[-1] if versions else None
+            if version:
+                logger.debug(f"Retrieved version {version} from {registry} for '{package_name}'")
             return version
+        logger.warning(f"Unexpected status code {response.status_code} from {registry} for '{package_name}'")
         return None
-    except Exception:
+    except requests.RequestException as e:
+        logger.warning(f"Network error querying {registry} for '{package_name}': {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Error parsing response from {registry} for '{package_name}': {e}", exc_info=True)
         return None
 
 
@@ -111,17 +135,35 @@ def _query_azure_artifacts_version(
             simple_index_url = repository_url.replace("/upload", f"/simple/{package_name}/")
         else:
             simple_index_url = repository_url.rstrip("/") + f"/simple/{package_name}/"
-    except Exception:
+        logger.debug(f"Constructed Azure Artifacts simple index URL: {simple_index_url}")
+    except Exception as e:
+        logger.warning(f"Error constructing Azure Artifacts URL for '{package_name}': {e}")
         return None
 
     try:
         response = requests.get(simple_index_url, timeout=5)
+        logger.debug(f"Azure Artifacts response status: {response.status_code}")
+        
+        if response.status_code == 401:
+            logger.warning(f"Authentication required for Azure Artifacts (401). Package '{package_name}' may require authentication to query.")
+        elif response.status_code == 403:
+            logger.warning(f"Access forbidden for Azure Artifacts (403). Package '{package_name}' may not be accessible or requires different permissions.")
+        elif response.status_code == 404:
+            logger.debug(f"Package '{package_name}' not found on Azure Artifacts (404) - first release")
+        elif response.status_code != 200:
+            logger.warning(f"Unexpected status code {response.status_code} from Azure Artifacts for '{package_name}'")
+        
         # Azure Artifacts simple index returns HTML, not JSON
         # Parsing HTML is complex and may require authentication
         # For now, we'll return None to fall back to git tags
         # This can be enhanced later with proper HTML parsing or API endpoint discovery
+        logger.info(f"Azure Artifacts version query not fully implemented (HTML parsing required). Falling back to git tags.")
         return None
-    except Exception:
+    except requests.RequestException as e:
+        logger.warning(f"Network error querying Azure Artifacts for '{package_name}': {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Unexpected error querying Azure Artifacts for '{package_name}': {e}", exc_info=True)
         return None
 
 
@@ -465,15 +507,26 @@ def resolve_version(
     # Step 1: Try to get baseline version from registry
     baseline_version = None
     if repository and package_name:
+        logger.info(f"Attempting to query {repository} for baseline version of '{package_name}'")
         baseline_version = query_registry_version(package_name, repository, repository_url)
 
     # Step 2: Fallback to git tags if registry query failed
     if not baseline_version:
+        logger.info(f"Registry query did not return a version, falling back to git tags")
+        if is_subfolder:
+            logger.debug(f"Looking for subfolder git tags matching '{package_name}-v*'")
+        else:
+            logger.debug("Looking for main package git tags matching 'v*'")
         baseline_version = get_latest_git_tag(project_root, package_name, is_subfolder)
+        if baseline_version:
+            logger.info(f"Found baseline version {baseline_version} from git tags")
+        else:
+            logger.info("No git tags found")
 
     # Step 3: If still no baseline, this is likely the first release
     # Default to 0.0.0 as the starting version (standard semantic-release behavior)
     if not baseline_version:
+        logger.info("No baseline version found (no registry version or git tags). Treating as first release (baseline: 0.0.0)")
         baseline_version = "0.0.0"
         # For first release, get all commits (no baseline to compare against)
         # Use HEAD as the reference point to get all commits
@@ -514,21 +567,31 @@ def resolve_version(
                     commit_msg = "\n".join(current_commit).strip()
                     if commit_msg:
                         commits.append(commit_msg)
-        except Exception:
+                logger.debug(f"Retrieved {len(commits)} commits for first release")
+        except Exception as e:
+            logger.warning(f"Error retrieving commits for first release: {e}", exc_info=True)
             commits = []
     else:
         # Step 4: Get commits since baseline
+        logger.info(f"Retrieving commits since version {baseline_version}")
+        if subfolder_path:
+            logger.debug(f"Filtering commits for subfolder path: {subfolder_path}")
         commits = get_commits_since(project_root, baseline_version, subfolder_path, package_name)
+        logger.debug(f"Found {len(commits)} commits since {baseline_version}")
 
     # Step 5: Calculate next version
+    logger.info(f"Calculating next version from baseline {baseline_version} and {len(commits)} commits")
     next_version = calculate_next_version(baseline_version, commits)
 
     if next_version:
+        logger.info(f"Calculated next version: {next_version}")
         return next_version, None
     else:
         # No relevant commits for version bump
         # For first release (0.0.0), default to 0.1.0 if there are any commits
         if baseline_version == "0.0.0" and commits:
             # Even if commits don't match conventional format, start at 0.1.0 for first release
+            logger.info("No conventional commits found, but commits exist. Defaulting to 0.1.0 for first release")
             return "0.1.0", None
+        logger.info("No version bump needed (no relevant conventional commits found)")
         return None, None

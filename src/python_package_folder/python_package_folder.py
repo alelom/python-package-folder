@@ -10,6 +10,8 @@ It can be invoked via:
 
 from __future__ import annotations
 
+import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +19,13 @@ from pathlib import Path
 from .manager import BuildManager
 from .utils import find_project_root, find_source_directory
 from .version_calculator import resolve_version
+
+# Configure logging for version resolution
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stderr)],
+)
 
 
 def is_github_actions() -> bool:
