@@ -742,18 +742,39 @@ class SubfolderBuildConfig:
         # Use only-include for source distributions to ensure only the subfolder is included
         # This prevents including files from the project root
         if package_dirs:
-            result.append("")
-            result.append("[tool.hatch.build.targets.sdist]")
-            # Include only the subfolder directory and necessary files
-            only_include_paths = [package_dirs[0]]
-            # Also include pyproject.toml and README if they exist
-            only_include_paths.append("pyproject.toml")
-            only_include_paths.append("README.md")
-            only_include_paths.append("README.rst")
-            only_include_paths.append("README.txt")
-            only_include_paths.append("README")
-            only_include_str = ", ".join(f'"{p}"' for p in only_include_paths)
-            result.append(f"only-include = [{only_include_str}]")
+            # Check if sdist section already exists
+            sdist_section_exists = any(
+                line.strip().startswith("[tool.hatch.build.targets.sdist]")
+                for line in result
+            )
+            # Check if only-include is already set in the sdist section
+            only_include_set = False
+            if sdist_section_exists:
+                in_sdist_section = False
+                for line in result:
+                    if line.strip().startswith("[tool.hatch.build.targets.sdist]"):
+                        in_sdist_section = True
+                    elif line.strip().startswith("[") and in_sdist_section:
+                        in_sdist_section = False
+                    elif in_sdist_section and re.match(r"^\s*only-include\s*=", line):
+                        only_include_set = True
+                        break
+
+            if not sdist_section_exists or not only_include_set:
+                if not sdist_section_exists:
+                    result.append("")
+                    result.append("[tool.hatch.build.targets.sdist]")
+                # Include only the subfolder directory and necessary files
+                only_include_paths = [package_dirs[0]]
+                # Also include pyproject.toml and README if they exist
+                only_include_paths.append("pyproject.toml")
+                only_include_paths.append("README.md")
+                only_include_paths.append("README.rst")
+                only_include_paths.append("README.txt")
+                only_include_paths.append("README")
+                only_include_str = ", ".join(f'"{p}"' for p in only_include_paths)
+                if not only_include_set:
+                    result.append(f"only-include = [{only_include_str}]")
 
         # Add dependency group if specified
         if dependency_group:
