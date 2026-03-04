@@ -310,6 +310,15 @@ class ImportAnalyzer:
             self.project_root / module_path_str / "__init__.py",
             (self.project_root / module_path_str).with_suffix(".py"),
         ]
+        
+        # Also check project_root/src/ for files at src/ root (like _globals.py)
+        # This is important when building subfolders where src_dir points to temp directory
+        src_base = self.project_root / "src"
+        if src_base.exists():
+            potential_paths.extend([
+                src_base / module_path_str / "__init__.py",
+                (src_base / module_path_str).with_suffix(".py"),
+            ])
 
         for path in potential_paths:
             if path.exists():
@@ -335,6 +344,13 @@ class ImportAnalyzer:
             potential_file = parent / f"{module_name.split('.')[-1]}.py"
             if potential_file.exists():
                 return potential_file
+            
+            # Also check project_root/src/ for files at src/ root
+            # This handles cases like _globals.py at src/_globals.py when building subfolders
+            if parent == self.project_root and src_base.exists():
+                src_file = src_base / f"{module_name.split('.')[-1]}.py"
+                if src_file.exists():
+                    return src_file
 
             # Check all subdirectories in parent (not just common ones)
             # This handles cases like src/data/spreadsheet_creation/spreadsheet_formatting_dataclasses.py
