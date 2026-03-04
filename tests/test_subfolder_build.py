@@ -950,3 +950,173 @@ description = "Subfolder package"
         assert 'build-backend = "hatchling.build"' in content
 
         config.restore()
+
+
+class TestTemporaryPackageDirectory:
+    """Tests for temporary package directory creation and cleanup."""
+
+    def test_temp_package_directory_created_with_correct_name(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that temporary package directory is created with correct import name."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+        (subfolder / "module.py").write_text("def func(): pass")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        # Package name should be "test-package-subfolder" (with hyphens)
+        assert config.package_name == "test-package-subfolder"
+
+        # Create temp pyproject (which creates temp package directory)
+        config.create_temp_pyproject()
+
+        # Temp package directory should exist with import name (underscores)
+        temp_package_dir = project_root / ".temp_package_test_package_subfolder"
+        assert temp_package_dir.exists()
+        assert config._temp_package_dir == temp_package_dir
+
+        # Temp package directory should contain the subfolder contents
+        assert (temp_package_dir / "module.py").exists()
+
+        # Cleanup
+        config.restore()
+
+    def test_temp_package_directory_uses_import_name(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that temp package directory name converts hyphens to underscores."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+        (subfolder / "module.py").write_text("def func(): pass")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+            package_name="my-custom-package",  # Package name with hyphens
+        )
+
+        config.create_temp_pyproject()
+
+        # Temp directory should use underscores (import name)
+        temp_package_dir = project_root / ".temp_package_my_custom_package"
+        assert temp_package_dir.exists()
+        assert config._temp_package_dir == temp_package_dir
+
+        config.restore()
+
+    def test_temp_package_directory_cleaned_up(self, test_project_with_pyproject: Path) -> None:
+        """Test that temporary package directory is cleaned up on restore."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+        (subfolder / "module.py").write_text("def func(): pass")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        config.create_temp_pyproject()
+
+        # Verify temp directory exists
+        temp_package_dir = config._temp_package_dir
+        assert temp_package_dir is not None
+        assert temp_package_dir.exists()
+
+        # Restore should clean it up
+        config.restore()
+
+        # Temp directory should be removed
+        assert not temp_package_dir.exists()
+        assert config._temp_package_dir is None
+
+    def test_packages_configuration_uses_temp_directory(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that packages configuration uses temp directory path."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+        (subfolder / "module.py").write_text("def func(): pass")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        pyproject_path = config.create_temp_pyproject()
+        assert pyproject_path is not None
+
+        content = pyproject_path.read_text()
+
+        # Packages configuration should use temp directory path
+        # Temp directory name is ".temp_package_test_package_subfolder"
+        assert ".temp_package_test_package_subfolder" in content
+
+        config.restore()
+
+    def test_temp_package_directory_preserves_structure(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that temp package directory preserves the original directory structure."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+        (subfolder / "module.py").write_text("def func(): pass")
+        (subfolder / "submodule").mkdir()
+        (subfolder / "submodule" / "__init__.py").write_text("")
+        (subfolder / "submodule" / "helper.py").write_text("def helper(): pass")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        config.create_temp_pyproject()
+
+        temp_package_dir = config._temp_package_dir
+        assert temp_package_dir is not None
+
+        # Verify structure is preserved
+        assert (temp_package_dir / "module.py").exists()
+        assert (temp_package_dir / "submodule" / "__init__.py").exists()
+        assert (temp_package_dir / "submodule" / "helper.py").exists()
+
+        config.restore()
+
+    def test_temp_package_directory_handles_existing_directory(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that temp package directory creation handles existing directory."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+        (subfolder / "module.py").write_text("def func(): pass")
+
+        # Create a directory that would conflict
+        existing_temp_dir = project_root / ".temp_package_test_package_subfolder"
+        existing_temp_dir.mkdir()
+        (existing_temp_dir / "old_file.py").write_text("# Old file")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        # Should remove existing directory and create new one
+        config.create_temp_pyproject()
+
+        temp_package_dir = config._temp_package_dir
+        assert temp_package_dir is not None
+        assert temp_package_dir.exists()
+        # Should have new file, not old file
+        assert (temp_package_dir / "module.py").exists()
+        assert not (temp_package_dir / "old_file.py").exists()
+
+        config.restore()

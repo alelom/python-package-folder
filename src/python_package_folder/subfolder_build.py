@@ -78,6 +78,7 @@ class SubfolderBuildConfig:
         self._used_subfolder_pyproject = False
         self._excluded_files: list[tuple[Path, Path]] = []  # List of (original_path, temp_path) tuples
         self._exclude_temp_dir: Path | None = None
+        self._temp_package_dir: Path | None = None
 
     def _derive_package_name(self) -> str:
         """
@@ -121,6 +122,48 @@ class SubfolderBuildConfig:
             # Fallback to just subfolder name
             return subfolder_name
 
+    def _create_temp_package_directory(self) -> None:
+        """
+        Create a temporary package directory with the correct import name.
+        
+        This ensures the installed package has the correct directory structure.
+        The package name (with hyphens) is converted to the import name (with underscores).
+        For example: 'ml-drawing-assistant-data' -> 'ml_drawing_assistant_data'
+        
+        The temporary directory is created in the project root and contains a copy
+        of the source directory contents.
+        """
+        if not self.package_name:
+            return
+        
+        # Convert package name (with hyphens) to import name (with underscores)
+        # PyPI package names use hyphens, but Python import names use underscores
+        import_name = self.package_name.replace("-", "_")
+        
+        # Create temporary directory name
+        temp_dir_name = f".temp_package_{import_name}"
+        temp_package_dir = self.project_root / temp_dir_name
+        
+        # Remove if it already exists (from a previous failed build)
+        if temp_package_dir.exists():
+            shutil.rmtree(temp_package_dir)
+        
+        # Copy the entire source directory contents to the temporary directory
+        try:
+            shutil.copytree(self.src_dir, temp_package_dir)
+            self._temp_package_dir = temp_package_dir
+            print(
+                f"Created temporary package directory: {temp_package_dir} "
+                f"(import name: {import_name})"
+            )
+        except Exception as e:
+            print(
+                f"Warning: Could not create temporary package directory: {e}",
+                file=sys.stderr,
+            )
+            # Fall back to using src_dir directly
+            self._temp_package_dir = None
+
     def _get_package_structure(self) -> tuple[str, list[str]]:
         """
         Determine the package structure for hatchling.
@@ -130,21 +173,24 @@ class SubfolderBuildConfig:
             - packages_path: The path to the directory containing packages
             - package_dirs: List of package directories to include
         """
-        # Check if src_dir itself is a package (has __init__.py)
-        has_init = (self.src_dir / "__init__.py").exists()
+        # Use temporary package directory if it exists, otherwise use src_dir
+        package_dir = self._temp_package_dir if self._temp_package_dir and self._temp_package_dir.exists() else self.src_dir
+        
+        # Check if package_dir itself is a package (has __init__.py)
+        has_init = (package_dir / "__init__.py").exists()
 
-        # Check for Python files directly in src_dir
-        py_files = list(self.src_dir.glob("*.py"))
+        # Check for Python files directly in package_dir
+        py_files = list(package_dir.glob("*.py"))
         has_py_files = bool(py_files)
 
-        # Calculate relative path
+        # Calculate relative path from project root
         try:
-            rel_path = self.src_dir.relative_to(self.project_root)
+            rel_path = package_dir.relative_to(self.project_root)
             packages_path = str(rel_path).replace("\\", "/")
         except ValueError:
             packages_path = None
 
-        # If src_dir has Python files but no __init__.py, we need to make it a package
+        # If package_dir has Python files but no __init__.py, we need to make it a package
         # or include it as a module directory
         if has_py_files and not has_init:
             # For flat structures, we include the directory itself
@@ -298,8 +344,14 @@ class SubfolderBuildConfig:
         if not self.version:
             raise ValueError("Version is required for subfolder builds")
 
-        # Ensure src_dir is a package (has __init__.py) for hatchling
-        init_file = self.src_dir / "__init__.py"
+        # Create temporary package directory with correct import name
+        self._create_temp_package_directory()
+        
+        # Determine which directory to use (temp package dir or src_dir)
+        package_dir = self._temp_package_dir if self._temp_package_dir and self._temp_package_dir.exists() else self.src_dir
+        
+        # Ensure package_dir is a package (has __init__.py) for hatchling
+        init_file = package_dir / "__init__.py"
         if not init_file.exists():
             # Create a temporary __init__.py to make it a package
             init_file.write_text("# Temporary __init__.py for build\n", encoding="utf-8")
@@ -1205,6 +1257,18 @@ class SubfolderBuildConfig:
             self.temp_pyproject = None
             self.original_pyproject_path = None
             self._used_subfolder_pyproject = False
+
+        # Remove temporary package directory if it exists
+        if self._temp_package_dir and self._temp_package_dir.exists():
+            try:
+                shutil.rmtree(self._temp_package_dir)
+                print(f"Removed temporary package directory: {self._temp_package_dir}")
+            except Exception as e:
+                print(
+                    f"Warning: Could not remove temporary package directory {self._temp_package_dir}: {e}",
+                    file=sys.stderr,
+                )
+            self._temp_package_dir = None
 
     def __enter__(self) -> Self:
         """Context manager entry."""

@@ -268,10 +268,30 @@ class BuildManager:
             # This is acceptable for tests or dependency-only operations
             if temp_pyproject is None:
                 self.subfolder_config = None
+            else:
+                # If temporary package directory was created, use it for all operations
+                # This ensures dependencies are copied to the correct location and
+                # imports are fixed in the files that will actually be packaged
+                if (
+                    self.subfolder_config
+                    and self.subfolder_config._temp_package_dir
+                    and self.subfolder_config._temp_package_dir.exists()
+                ):
+                    # Update src_dir to point to temp package directory
+                    self.src_dir = self.subfolder_config._temp_package_dir
+                    # Recreate finder with updated src_dir so it calculates target paths correctly
+                    self.finder = ExternalDependencyFinder(
+                        self.project_root,
+                        self.src_dir,
+                        exclude_patterns=self.exclude_patterns,
+                    )
+                    print(
+                        f"Using temporary package directory for build: {self.src_dir}"
+                    )
 
         analyzer = ImportAnalyzer(self.project_root)
 
-        # Find all Python files in src/
+        # Find all Python files in src/ (which may now be the temp package directory)
         python_files = analyzer.find_all_python_files(self.src_dir)
 
         # Find external dependencies using the configured finder
