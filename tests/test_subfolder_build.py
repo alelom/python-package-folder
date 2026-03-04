@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import subprocess
+import sys
+import tempfile
+import venv
 import zipfile
 from pathlib import Path
 
@@ -1242,3 +1245,112 @@ build-backend = "hatchling.build"
                 assert len(data_files) == 0, (
                     f"Wheel should not contain 'data/' directory, should use '{import_name}/' instead"
                 )
+
+    def test_wheel_installs_with_correct_package_directory(self, tmp_path: Path) -> None:
+        """Test that a built wheel can be installed and the package directory exists."""
+        project_root = tmp_path / "test_project"
+        project_root.mkdir()
+
+        # Create pyproject.toml
+        pyproject_content = """[project]
+name = "test-package"
+version = "0.1.0"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+"""
+        (project_root / "pyproject.toml").write_text(pyproject_content)
+
+        # Create subfolder with package name that has hyphens
+        subfolder = project_root / "src" / "data"
+        subfolder.mkdir(parents=True)
+        
+        # Create some Python files
+        (subfolder / "__init__.py").write_text("# Package init")
+        (subfolder / "module.py").write_text("def hello(): return 'world'")
+        (subfolder / "utils.py").write_text("def util(): return 'helper'")
+
+        # Package name with hyphens (like ml-drawing-assistant-data)
+        package_name = "ml-drawing-assistant-data"
+        import_name = "ml_drawing_assistant_data"  # Expected import name
+        version = "1.0.0"
+
+        # Build the wheel
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+        
+        def build_wheel() -> None:
+            """Build the wheel using uv build."""
+            subprocess.run(
+                ["uv", "build", "--wheel"],
+                cwd=project_root,
+                check=True,
+                capture_output=True,
+            )
+
+        try:
+            manager.run_build(build_wheel, version=version, package_name=package_name)
+        finally:
+            manager.cleanup()
+
+        # Find the built wheel
+        dist_dir = project_root / "dist"
+        assert dist_dir.exists(), "dist directory should exist after build"
+        
+        wheel_files = list(dist_dir.glob("*.whl"))
+        assert len(wheel_files) > 0, "At least one wheel should be built"
+        
+        wheel_file = wheel_files[0]
+        
+        # Create a temporary virtual environment and install the wheel
+        venv_dir = tmp_path / "test_venv"
+        venv.create(venv_dir, with_pip=True)
+        
+        # Determine the Python executable in the venv
+        if sys.platform == "win32":
+            python_exe = venv_dir / "Scripts" / "python.exe"
+            pip_exe = venv_dir / "Scripts" / "pip.exe"
+        else:
+            python_exe = venv_dir / "bin" / "python"
+            pip_exe = venv_dir / "bin" / "pip"
+        
+        # Install the wheel
+        install_result = subprocess.run(
+            [str(pip_exe), "install", str(wheel_file)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        
+        # Find the site-packages directory
+        if sys.platform == "win32":
+            site_packages = venv_dir / "Lib" / "site-packages"
+        else:
+            # Get Python version
+            version_result = subprocess.run(
+                [str(python_exe), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            py_version = version_result.stdout.strip()
+            site_packages = venv_dir / "lib" / f"python{py_version}" / "site-packages"
+        
+        assert site_packages.exists(), f"site-packages directory should exist at {site_packages}"
+        
+        # Verify the package directory exists (not just dist-info)
+        package_dir = site_packages / import_name
+        assert package_dir.exists(), (
+            f"Package directory {import_name}/ should exist in site-packages after installation. "
+            f"Found in site-packages: {list(site_packages.iterdir())[:20]}"
+        )
+        assert package_dir.is_dir(), f"{import_name} should be a directory, not a file"
+        
+        # Verify the expected files are present
+        assert (package_dir / "__init__.py").exists(), f"{import_name}/__init__.py should exist"
+        assert (package_dir / "module.py").exists(), f"{import_name}/module.py should exist"
+        assert (package_dir / "utils.py").exists(), f"{import_name}/utils.py should exist"
+        
+        # Verify dist-info also exists
+        dist_info_dir = site_packages / f"{import_name}-{version}.dist-info"
+        assert dist_info_dir.exists(), f"dist-info directory should exist: {dist_info_dir}"

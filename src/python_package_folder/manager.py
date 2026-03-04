@@ -1142,6 +1142,26 @@ class BuildManager:
             else:
                 print("No external dependencies found\n")
 
+            # Verify temporary package directory exists if using subfolder build
+            if self.subfolder_config and self.subfolder_config._temp_package_dir:
+                temp_dir = self.subfolder_config._temp_package_dir
+                if not temp_dir.exists():
+                    raise RuntimeError(
+                        f"Temporary package directory does not exist: {temp_dir}. "
+                        "This should have been created during prepare_build()."
+                    )
+                # Verify it contains Python files
+                py_files = list(temp_dir.glob("*.py"))
+                if not py_files:
+                    raise RuntimeError(
+                        f"Temporary package directory exists but contains no Python files: {temp_dir}"
+                    )
+                # Verify __init__.py exists
+                if not (temp_dir / "__init__.py").exists():
+                    raise RuntimeError(
+                        f"Temporary package directory missing __init__.py: {temp_dir}"
+                    )
+
             print("Running build...")
             # Build command should run from project root to find pyproject.toml
             import os
@@ -1152,6 +1172,36 @@ class BuildManager:
                 build_command()
             finally:
                 os.chdir(original_cwd)
+            
+            # Verify wheel contents after build (for subfolder builds)
+            if self.subfolder_config and self.subfolder_config.package_name:
+                import_name = self.subfolder_config.package_name.replace("-", "_")
+                dist_dir = self.project_root / "dist"
+                if dist_dir.exists():
+                    wheel_files = list(dist_dir.glob("*.whl"))
+                    if wheel_files:
+                        import zipfile
+                        wheel_file = wheel_files[0]
+                        try:
+                            with zipfile.ZipFile(wheel_file, "r") as wheel:
+                                file_names = wheel.namelist()
+                                package_files = [f for f in file_names if f.startswith(f"{import_name}/")]
+                                if not package_files:
+                                    print(
+                                        f"\nWARNING: Built wheel does not contain package directory '{import_name}/'. "
+                                        f"Only found: {[f for f in file_names if '.dist-info' not in f][:10]}",
+                                        file=sys.stderr,
+                                    )
+                                else:
+                                    print(
+                                        f"\nVerified wheel contains package directory '{import_name}/' "
+                                        f"with {len(package_files)} files"
+                                    )
+                        except Exception as e:
+                            print(
+                                f"\nWARNING: Could not verify wheel contents: {e}",
+                                file=sys.stderr,
+                            )
 
         finally:
             print("\nCleaning up copied files...")
