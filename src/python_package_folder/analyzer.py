@@ -227,19 +227,27 @@ class ImportAnalyzer:
             import_info.classification = "stdlib"
             return
 
+        # Check if it's a third-party package (in site-packages) FIRST
+        # This must be checked before resolve_local_import to avoid incorrectly
+        # classifying site-packages modules as "external" when they're found
+        # by the recursive search
+        if self.is_third_party(module_name):
+            import_info.classification = "third_party"
+            return
+
         # Try to resolve as a local import
         resolved = self.resolve_local_import(import_info, src_dir)
         if resolved is not None:
+            # Double-check: if resolved path is in site-packages, it's actually third-party
+            # (this can happen if the recursive search finds it before importlib does)
+            if "site-packages" in str(resolved) or "dist-packages" in str(resolved):
+                import_info.classification = "third_party"
+                return
             if resolved.is_relative_to(src_dir):
                 import_info.classification = "local"
             else:
                 import_info.classification = "external"
             import_info.resolved_path = resolved
-            return
-
-        # Check if it's a third-party package (in site-packages)
-        if self.is_third_party(module_name):
-            import_info.classification = "third_party"
             return
 
         # Mark as ambiguous if we can't determine
@@ -340,6 +348,9 @@ class ImportAnalyzer:
                     for potential_file in parent.rglob(f"{module_basename}.py"):
                         # Only search within project_root to avoid going too far
                         if not potential_file.is_relative_to(self.project_root):
+                            continue
+                        # Skip site-packages and dist-packages (these are third-party, not external)
+                        if "site-packages" in str(potential_file) or "dist-packages" in str(potential_file):
                             continue
                         # Skip excluded patterns
                         if any(
