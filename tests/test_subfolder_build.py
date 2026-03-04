@@ -1910,3 +1910,192 @@ only-include = ["src/data", "pyproject.toml", "README.md"]
             # The main verification (wheel contents) has already passed
             print(f"Note: Installation/import test skipped due to: {e}")
             # The wheel packaging verification above is the main test
+
+
+class TestImportConversion:
+    """Tests to verify that import conversion respects classification."""
+
+    def test_third_party_imports_not_converted_to_relative(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """
+        Test that third-party imports (like torch, torchvision) are NOT converted
+        to relative imports, even if they match local file names.
+        """
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Create a module that imports third-party packages
+        (subfolder / "__init__.py").write_text("# Package init")
+        (subfolder / "module.py").write_text(
+            """import torch
+import torch.utils.data
+from torchvision import datasets
+import numpy as np
+from PIL import Image
+"""
+        )
+
+        # Build the subfolder
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+
+        try:
+            manager.prepare_build(version="1.0.0", package_name="my-package")
+
+            # Verify the temp package directory exists
+            assert manager.subfolder_config is not None
+            temp_dir = manager.subfolder_config._temp_package_dir
+            assert temp_dir is not None and temp_dir.exists()
+
+            # Read the modified file
+            modified_content = (temp_dir / "module.py").read_text(encoding="utf-8")
+
+            # Verify third-party imports were NOT converted to relative imports
+            assert "import torch" in modified_content, (
+                "torch import should remain absolute, not converted to relative"
+            )
+            assert "import torch.utils.data" in modified_content or "from torch.utils import data" in modified_content, (
+                "torch.utils.data import should remain absolute"
+            )
+            assert "from torchvision import datasets" in modified_content, (
+                "torchvision import should remain absolute, not converted to relative"
+            )
+            assert "import numpy as np" in modified_content, (
+                "numpy import should remain absolute"
+            )
+            assert "from PIL import Image" in modified_content, (
+                "PIL import should remain absolute"
+            )
+
+            # Verify NO relative imports were added for these third-party packages
+            assert "from . import torch" not in modified_content, (
+                "torch should NOT be converted to relative import"
+            )
+            assert "from .torchvision import" not in modified_content, (
+                "torchvision should NOT be converted to relative import"
+            )
+            assert "from . import numpy" not in modified_content, (
+                "numpy should NOT be converted to relative import"
+            )
+
+        finally:
+            manager.cleanup()
+
+    def test_ambiguous_imports_not_converted_to_relative(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """
+        Test that ambiguous imports (like time, math) are NOT converted
+        to relative imports, even if they match local file names.
+        """
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Create a module that imports standard library modules
+        # (which may be classified as ambiguous if not in stdlib list)
+        (subfolder / "__init__.py").write_text("# Package init")
+        (subfolder / "module.py").write_text(
+            """import time
+import math
+from datetime import datetime
+import os
+import sys
+"""
+        )
+
+        # Build the subfolder
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+
+        try:
+            manager.prepare_build(version="1.0.0", package_name="my-package")
+
+            # Verify the temp package directory exists
+            assert manager.subfolder_config is not None
+            temp_dir = manager.subfolder_config._temp_package_dir
+            assert temp_dir is not None and temp_dir.exists()
+
+            # Read the modified file
+            modified_content = (temp_dir / "module.py").read_text(encoding="utf-8")
+
+            # Verify stdlib/ambiguous imports were NOT converted to relative imports
+            assert "import time" in modified_content, (
+                "time import should remain absolute, not converted to relative"
+            )
+            assert "import math" in modified_content, (
+                "math import should remain absolute, not converted to relative"
+            )
+            assert "from datetime import datetime" in modified_content, (
+                "datetime import should remain absolute"
+            )
+            assert "import os" in modified_content, (
+                "os import should remain absolute"
+            )
+            assert "import sys" in modified_content, (
+                "sys import should remain absolute"
+            )
+
+            # Verify NO relative imports were added for these stdlib modules
+            assert "from . import time" not in modified_content, (
+                "time should NOT be converted to relative import"
+            )
+            assert "from . import math" not in modified_content, (
+                "math should NOT be converted to relative import"
+            )
+            assert "from .datetime import" not in modified_content, (
+                "datetime should NOT be converted to relative import"
+            )
+
+        finally:
+            manager.cleanup()
+
+    def test_external_imports_are_converted_to_relative(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """
+        Test that external imports (from copied dependencies) ARE converted
+        to relative imports.
+        """
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Create an external dependency
+        external_dir = project_root / "src" / "_shared"
+        external_dir.mkdir(parents=True)
+        (external_dir / "__init__.py").write_text("# External shared module")
+        (external_dir / "utils.py").write_text("def helper(): return 'help'")
+
+        # Create a module that imports the external dependency
+        (subfolder / "__init__.py").write_text("# Package init")
+        (subfolder / "module.py").write_text(
+            "from _shared.utils import helper\n\ndef func(): return helper()"
+        )
+
+        # Build the subfolder
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+
+        try:
+            external_deps = manager.prepare_build(version="1.0.0", package_name="my-package")
+
+            # Verify external dependency was found and copied
+            assert len(external_deps) > 0, "External dependency should be found"
+
+            # Verify the temp package directory exists
+            assert manager.subfolder_config is not None
+            temp_dir = manager.subfolder_config._temp_package_dir
+            assert temp_dir is not None and temp_dir.exists()
+
+            # Read the modified file
+            modified_content = (temp_dir / "module.py").read_text(encoding="utf-8")
+
+            # Verify external import WAS converted to relative import
+            assert "from ._shared.utils import helper" in modified_content, (
+                "External import should be converted to relative import"
+            )
+            assert "from _shared.utils import helper" not in modified_content or (
+                "from ._shared.utils import helper" in modified_content
+            ), (
+                "Original absolute import should be replaced with relative import"
+            )
+
+        finally:
+            manager.cleanup()

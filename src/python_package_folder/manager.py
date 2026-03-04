@@ -777,12 +777,18 @@ class BuildManager:
         1. Imports of copied dependencies (e.g., `from _shared.image_utils` -> `from ._shared.image_utils`)
         2. Imports of local files within the subfolder (e.g., `from detect_empty_drawings_utils` -> `from .detect_empty_drawings_utils`)
 
+        Only imports classified as "external" or "local" are converted. Imports classified
+        as "ambiguous", "third_party", or "stdlib" are left unchanged.
+
         Args:
             python_files: List of Python files in the source directory
             external_deps: List of external dependencies that were copied
         """
         import ast
         import re
+
+        # Create analyzer for classifying imports
+        analyzer = ImportAnalyzer(self.project_root)
 
         # Build a set of import names that were copied
         copied_import_names: set[str] = set()
@@ -838,7 +844,22 @@ class BuildManager:
                         if node.module is None:
                             continue
 
+                        # Classify the import to determine if it should be converted
+                        import_info = ImportInfo(
+                            module_name=node.module,
+                            import_type="from",
+                            line_number=node.lineno,
+                            file_path=file_path,
+                        )
+                        analyzer.classify_import(import_info, self.src_dir)
+
+                        # Only convert imports classified as "external" or "local"
+                        # Skip ambiguous, third_party, and stdlib imports
+                        if import_info.classification not in ("external", "local"):
+                            continue
+
                         # Check if this import matches a copied dependency or a local file
+                        # (additional safety check, but classification takes precedence)
                         root_module = node.module.split(".")[0]
                         is_copied_dependency = (
                             root_module in copied_import_names or node.module in copied_import_names
@@ -874,6 +895,22 @@ class BuildManager:
                     elif isinstance(node, ast.Import):
                         # Handle "import X" statements
                         for alias in node.names:
+                            # Classify the import to determine if it should be converted
+                            import_info = ImportInfo(
+                                module_name=alias.name,
+                                import_type="import",
+                                line_number=node.lineno,
+                                file_path=file_path,
+                            )
+                            analyzer.classify_import(import_info, self.src_dir)
+
+                            # Only convert imports classified as "external" or "local"
+                            # Skip ambiguous, third_party, and stdlib imports
+                            if import_info.classification not in ("external", "local"):
+                                continue
+
+                            # Check if this import matches a copied dependency or a local file
+                            # (additional safety check, but classification takes precedence)
                             root_module = alias.name.split(".")[0]
                             is_copied_dependency = root_module in copied_import_names
                             is_local_file = root_module in local_file_names
