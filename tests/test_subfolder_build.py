@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
 
-from python_package_folder import SubfolderBuildConfig
+from python_package_folder import BuildManager, SubfolderBuildConfig
 
 
 @pytest.fixture
@@ -683,8 +685,8 @@ class TestSubfolderBuildTemporaryPyprojectCreation:
         assert "[tool.hatch.version]" not in content
         assert "[tool.uv-dynamic-versioning]" not in content
 
-        # Verify packages path is set correctly (should use temp package directory)
-        assert '.temp_package_my_custom_package' in content
+        # Verify packages path is set correctly (should use import name, not temp directory name)
+        assert '"my_custom_package"' in content or "'my_custom_package'" in content
 
         # Verify backup was created
         assert (project_root / "pyproject.toml.original").exists()
@@ -734,8 +736,9 @@ class TestSubfolderBuildTemporaryPyprojectCreation:
         # Verify only-include is present
         assert "only-include = [" in content
 
-        # Verify the temp package directory is included (not the original subfolder)
-        assert '.temp_package_test_package' in content
+        # Verify the import name is used in packages configuration (not the original subfolder)
+        # The temp directory is renamed to the import name, so packages should use that
+        assert '"test_package"' in content or "'test_package'" in content
 
         # Verify necessary files are included
         assert '"pyproject.toml"' in content
@@ -975,8 +978,9 @@ class TestTemporaryPackageDirectory:
         # Create temp pyproject (which creates temp package directory)
         config.create_temp_pyproject()
 
-        # Temp package directory should exist with import name (underscores)
-        temp_package_dir = project_root / ".temp_package_test_package_subfolder"
+        # Temp package directory should exist with import name (underscores, no temp prefix)
+        import_name = "test_package_subfolder"  # Import name from "test-package-subfolder"
+        temp_package_dir = project_root / import_name
         assert temp_package_dir.exists()
         assert config._temp_package_dir == temp_package_dir
 
@@ -1003,8 +1007,9 @@ class TestTemporaryPackageDirectory:
 
         config.create_temp_pyproject()
 
-        # Temp directory should use underscores (import name)
-        temp_package_dir = project_root / ".temp_package_my_custom_package"
+        # Temp directory should use underscores (import name, no temp prefix)
+        import_name = "my_custom_package"  # Import name from "my-custom-package"
+        temp_package_dir = project_root / import_name
         assert temp_package_dir.exists()
         assert config._temp_package_dir == temp_package_dir
 
@@ -1055,9 +1060,9 @@ class TestTemporaryPackageDirectory:
 
         content = pyproject_path.read_text()
 
-        # Packages configuration should use temp directory path
-        # Temp directory name is ".temp_package_test_package_subfolder"
-        assert ".temp_package_test_package_subfolder" in content
+        # Packages configuration should use import name (temp directory is renamed to import name)
+        # Import name is "test_package_subfolder" (from "test-package-subfolder")
+        assert '"test_package_subfolder"' in content or "'test_package_subfolder'" in content
 
         config.restore()
 
@@ -1098,8 +1103,9 @@ class TestTemporaryPackageDirectory:
         subfolder = project_root / "subfolder"
         (subfolder / "module.py").write_text("def func(): pass")
 
-        # Create a directory that would conflict
-        existing_temp_dir = project_root / ".temp_package_test_package_subfolder"
+        # Create a directory that would conflict (using import name directly)
+        import_name = "test_package_subfolder"  # Import name from "test-package-subfolder"
+        existing_temp_dir = project_root / import_name
         existing_temp_dir.mkdir()
         (existing_temp_dir / "old_file.py").write_text("# Old file")
 
@@ -1120,3 +1126,119 @@ class TestTemporaryPackageDirectory:
         assert not (temp_package_dir / "old_file.py").exists()
 
         config.restore()
+
+
+class TestWheelPackaging:
+    """Tests to verify that wheels are correctly packaged with the right directory structure."""
+
+    def test_wheel_contains_package_directory_with_correct_name(self, tmp_path: Path) -> None:
+        """Test that a built wheel contains the package directory with the correct import name."""
+        project_root = tmp_path / "test_project"
+        project_root.mkdir()
+
+        # Create pyproject.toml
+        pyproject_content = """[project]
+name = "test-package"
+version = "0.1.0"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+"""
+        (project_root / "pyproject.toml").write_text(pyproject_content)
+
+        # Create subfolder with package name that has hyphens
+        subfolder = project_root / "src" / "data"
+        subfolder.mkdir(parents=True)
+        
+        # Create some Python files
+        (subfolder / "__init__.py").write_text("# Package init")
+        (subfolder / "module.py").write_text("def hello(): return 'world'")
+        (subfolder / "utils.py").write_text("def util(): return 'helper'")
+
+        # Package name with hyphens (like ml-drawing-assistant-data)
+        package_name = "ml-drawing-assistant-data"
+        import_name = "ml_drawing_assistant_data"  # Expected import name
+        version = "1.0.0"
+
+        # Build the wheel
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+        
+        def build_wheel() -> None:
+            """Build the wheel using uv build."""
+            subprocess.run(
+                ["uv", "build", "--wheel"],
+                cwd=project_root,
+                check=True,
+                capture_output=True,
+            )
+
+        try:
+            # run_build will call prepare_build internally, so we don't need to call it explicitly
+            manager.run_build(build_wheel, version=version, package_name=package_name)
+        finally:
+            manager.cleanup()
+
+        # Find the built wheel
+        dist_dir = project_root / "dist"
+        assert dist_dir.exists(), "dist directory should exist after build"
+        
+        wheel_files = list(dist_dir.glob("*.whl"))
+        assert len(wheel_files) > 0, "At least one wheel should be built"
+        
+        wheel_file = wheel_files[0]
+        
+        # Extract and inspect the wheel
+        with zipfile.ZipFile(wheel_file, "r") as wheel:
+            # Get all file names in the wheel
+            file_names = wheel.namelist()
+            
+            # Debug: Print all files to understand what's in the wheel
+            print(f"\nWheel contents ({len(file_names)} files):")
+            for f in sorted(file_names)[:20]:
+                print(f"  {f}")
+            if len(file_names) > 20:
+                print(f"  ... and {len(file_names) - 20} more files")
+            
+            # Verify the package directory exists with the correct import name
+            # The package should be installed as ml_drawing_assistant_data/, not .temp_package_ml_drawing_assistant_data/
+            package_dir_prefix = f"{import_name}/"
+            package_files = [f for f in file_names if f.startswith(package_dir_prefix)]
+            
+            # Also check for temp directory name (should NOT be present)
+            temp_dir_prefix = ".temp_package_"
+            temp_dir_files = [f for f in file_names if temp_dir_prefix in f and ".dist-info" not in f]
+            
+            assert len(package_files) > 0, (
+                f"Wheel should contain files in {import_name}/ directory. "
+                f"Found {len(file_names)} total files. "
+                f"Files with '/' in name: {[f for f in file_names if '/' in f and '.dist-info' not in f][:10]}"
+            )
+            
+            # Verify the expected files are present
+            assert f"{import_name}/__init__.py" in file_names, (
+                f"Wheel should contain {import_name}/__init__.py"
+            )
+            assert f"{import_name}/module.py" in file_names, (
+                f"Wheel should contain {import_name}/module.py"
+            )
+            assert f"{import_name}/utils.py" in file_names, (
+                f"Wheel should contain {import_name}/utils.py"
+            )
+            
+            # Verify the .dist-info folder exists
+            dist_info_files = [f for f in file_names if ".dist-info" in f]
+            assert len(dist_info_files) > 0, "Wheel should contain .dist-info files"
+            
+            # Verify the temp directory name is NOT in the wheel
+            assert len(temp_dir_files) == 0, (
+                f"Wheel should not contain temp directory files. Found: {temp_dir_files[:5]}"
+            )
+            
+            # Verify the original subfolder name is NOT in the wheel (if different from import name)
+            if "data/" in file_names and import_name != "data":
+                # Only check if data/ would be different from the import name
+                data_files = [f for f in file_names if f.startswith("data/") and ".dist-info" not in f]
+                assert len(data_files) == 0, (
+                    f"Wheel should not contain 'data/' directory, should use '{import_name}/' instead"
+                )

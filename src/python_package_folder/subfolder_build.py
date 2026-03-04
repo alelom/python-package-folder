@@ -130,8 +130,8 @@ class SubfolderBuildConfig:
         The package name (with hyphens) is converted to the import name (with underscores).
         For example: 'ml-drawing-assistant-data' -> 'ml_drawing_assistant_data'
         
-        The temporary directory is created in the project root and contains a copy
-        of the source directory contents.
+        The temporary directory is created in the project root with the import name directly.
+        This way, hatchling will install it with the correct name without needing force-include.
         """
         if not self.package_name:
             return
@@ -140,20 +140,42 @@ class SubfolderBuildConfig:
         # PyPI package names use hyphens, but Python import names use underscores
         import_name = self.package_name.replace("-", "_")
         
-        # Create temporary directory name
-        temp_dir_name = f".temp_package_{import_name}"
-        temp_package_dir = self.project_root / temp_dir_name
+        # Create temporary directory with the import name directly
+        # This way, hatchling will install it with the correct name
+        import_name_dir = self.project_root / import_name
         
-        # Remove if it already exists (from a previous failed build)
-        if temp_package_dir.exists():
-            shutil.rmtree(temp_package_dir)
+        # Check if the directory already exists and is the correct one
+        if import_name_dir.exists() and import_name_dir == self._temp_package_dir:
+            # Directory already exists and is the correct one, no need to recreate
+            return
         
-        # Copy the entire source directory contents to the temporary directory
-        try:
-            shutil.copytree(self.src_dir, temp_package_dir)
-            self._temp_package_dir = temp_package_dir
+        # Remove if it already exists (from a previous build)
+        if import_name_dir.exists():
+            shutil.rmtree(import_name_dir)
+        
+        # Copy the entire source directory contents directly to the import name directory
+        # Check if src_dir exists and is a directory before copying
+        if not self.src_dir.exists():
             print(
-                f"Created temporary package directory: {temp_package_dir} "
+                f"Warning: Source directory does not exist: {self.src_dir}",
+                file=sys.stderr,
+            )
+            self._temp_package_dir = None
+            return
+        
+        if not self.src_dir.is_dir():
+            print(
+                f"Warning: Source path is not a directory: {self.src_dir}",
+                file=sys.stderr,
+            )
+            self._temp_package_dir = None
+            return
+        
+        try:
+            shutil.copytree(self.src_dir, import_name_dir)
+            self._temp_package_dir = import_name_dir
+            print(
+                f"Created temporary package directory: {import_name_dir} "
                 f"(import name: {import_name})"
             )
         except Exception as e:
@@ -344,6 +366,116 @@ class SubfolderBuildConfig:
         if not self.version:
             raise ValueError("Version is required for subfolder builds")
 
+        # Check if pyproject.toml exists in subfolder FIRST
+        # This allows us to handle subfolder pyproject.toml even when parent doesn't exist
+        # But first ensure src_dir exists
+        if not self.src_dir.exists() or not self.src_dir.is_dir():
+            # If src_dir doesn't exist, we can't proceed
+            print(
+                f"Warning: Source directory does not exist or is not a directory: {self.src_dir}",
+                file=sys.stderr,
+            )
+            return None
+        
+        subfolder_pyproject = self.src_dir / "pyproject.toml"
+        if subfolder_pyproject.exists() and subfolder_pyproject.is_file():
+            # Read the subfolder pyproject.toml content IMMEDIATELY after checking it exists
+            # This prevents any issues if the file is affected by subsequent operations
+            try:
+                subfolder_content = subfolder_pyproject.read_text(encoding="utf-8")
+            except (FileNotFoundError, OSError) as e:
+                # File was deleted or inaccessible between check and read
+                print(
+                    f"Warning: Could not read subfolder pyproject.toml at {subfolder_pyproject}: {e}. "
+                    "Falling back to creating from parent.",
+                    file=sys.stderr,
+                )
+                subfolder_content = None
+            
+            if subfolder_content is not None:
+                # Ensure src_dir is a package (has __init__.py) before creating temp directory
+                # This way the __init__.py will be copied to the temp directory
+                init_file = self.src_dir / "__init__.py"
+                if not init_file.exists():
+                    # Create a temporary __init__.py to make it a package
+                    init_file.write_text("# Temporary __init__.py for build\n", encoding="utf-8")
+                    self._temp_init_created = True
+                else:
+                    self._temp_init_created = False
+
+                # Create temporary package directory with correct import name
+                # This will copy the __init__.py we just created (if any)
+                self._create_temp_package_directory()
+                
+                # Determine which directory to use (temp package dir or src_dir)
+                package_dir = self._temp_package_dir if self._temp_package_dir and self._temp_package_dir.exists() else self.src_dir
+                # Use the subfolder's pyproject.toml
+                print(f"Using existing pyproject.toml from subfolder: {subfolder_pyproject}")
+                self._used_subfolder_pyproject = True
+
+                # Store reference to original project root pyproject.toml
+                original_pyproject = self.project_root / "pyproject.toml"
+                self.original_pyproject_path = original_pyproject
+
+                # Create temporary pyproject.toml file
+                temp_pyproject_path = self.project_root / "pyproject.toml.temp"
+
+                # Adjust packages path to be relative to project root
+                adjusted_content = self._adjust_subfolder_pyproject_packages_path(subfolder_content)
+                
+                # Read exclude patterns from root pyproject.toml and inject them (if it exists)
+                exclude_patterns = []
+                if original_pyproject.exists():
+                    exclude_patterns = read_exclude_patterns(original_pyproject)
+                    print(
+                        f"INFO: Read exclude patterns from {original_pyproject}: {exclude_patterns}",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"INFO: No parent pyproject.toml found at {original_pyproject}, skipping exclude patterns",
+                        file=sys.stderr,
+                    )
+                if exclude_patterns:
+                    adjusted_content = self._inject_exclude_patterns(adjusted_content, exclude_patterns)
+
+                # Write adjusted content to temporary file
+                temp_pyproject_path.write_text(adjusted_content, encoding="utf-8")
+                self.temp_pyproject = temp_pyproject_path
+
+                # Print the temporary pyproject.toml content for debugging
+                print("\n" + "=" * 80)
+                print("Temporary pyproject.toml content (from subfolder pyproject.toml):")
+                print("=" * 80)
+                print(adjusted_content)
+                print("=" * 80 + "\n")
+
+                # If original pyproject.toml exists, temporarily move it
+                if original_pyproject.exists():
+                    backup_path = self.project_root / "pyproject.toml.original"
+                    # Remove backup if it already exists (from previous failed test or run)
+                    if backup_path.exists():
+                        backup_path.unlink()
+                    original_pyproject.rename(backup_path)
+                    self.original_pyproject_backup = backup_path
+
+                # Move temp file to pyproject.toml for the build
+                temp_pyproject_path.rename(original_pyproject)
+                self.temp_pyproject = original_pyproject
+
+                # Handle README file
+                self._handle_readme()
+
+                # Exclude files matching exclude patterns
+                if exclude_patterns:
+                    self._exclude_files_by_patterns(exclude_patterns)
+
+                return original_pyproject
+
+        # No pyproject.toml in subfolder, create one from parent
+        self._used_subfolder_pyproject = False
+        print("No pyproject.toml found in subfolder, creating temporary one from parent")
+
         # Ensure src_dir is a package (has __init__.py) before creating temp directory
         # This way the __init__.py will be copied to the temp directory
         init_file = self.src_dir / "__init__.py"
@@ -360,71 +492,6 @@ class SubfolderBuildConfig:
         
         # Determine which directory to use (temp package dir or src_dir)
         package_dir = self._temp_package_dir if self._temp_package_dir and self._temp_package_dir.exists() else self.src_dir
-
-        # Check if pyproject.toml exists in subfolder
-        subfolder_pyproject = self.src_dir / "pyproject.toml"
-        if subfolder_pyproject.exists():
-            # Use the subfolder's pyproject.toml
-            print(f"Using existing pyproject.toml from subfolder: {subfolder_pyproject}")
-            self._used_subfolder_pyproject = True
-
-            # Store reference to original project root pyproject.toml
-            original_pyproject = self.project_root / "pyproject.toml"
-            self.original_pyproject_path = original_pyproject
-
-            # Create temporary pyproject.toml file
-            temp_pyproject_path = self.project_root / "pyproject.toml.temp"
-
-            # Read and adjust the subfolder pyproject.toml
-            subfolder_content = subfolder_pyproject.read_text(encoding="utf-8")
-            # Adjust packages path to be relative to project root
-            adjusted_content = self._adjust_subfolder_pyproject_packages_path(subfolder_content)
-            
-            # Read exclude patterns from root pyproject.toml and inject them
-            exclude_patterns = read_exclude_patterns(original_pyproject)
-            print(
-                f"INFO: Read exclude patterns from {original_pyproject}: {exclude_patterns}",
-                file=sys.stderr,
-            )
-            if exclude_patterns:
-                adjusted_content = self._inject_exclude_patterns(adjusted_content, exclude_patterns)
-
-            # Write adjusted content to temporary file
-            temp_pyproject_path.write_text(adjusted_content, encoding="utf-8")
-            self.temp_pyproject = temp_pyproject_path
-
-            # Print the temporary pyproject.toml content for debugging
-            print("\n" + "=" * 80)
-            print("Temporary pyproject.toml content (from subfolder pyproject.toml):")
-            print("=" * 80)
-            print(adjusted_content)
-            print("=" * 80 + "\n")
-
-            # If original pyproject.toml exists, temporarily move it
-            if original_pyproject.exists():
-                backup_path = self.project_root / "pyproject.toml.original"
-                # Remove backup if it already exists (from previous failed test or run)
-                if backup_path.exists():
-                    backup_path.unlink()
-                original_pyproject.rename(backup_path)
-                self.original_pyproject_backup = backup_path
-
-            # Move temp file to pyproject.toml for the build
-            temp_pyproject_path.rename(original_pyproject)
-            self.temp_pyproject = original_pyproject
-
-            # Handle README file
-            self._handle_readme()
-
-            # Exclude files matching exclude patterns
-            if exclude_patterns:
-                self._exclude_files_by_patterns(exclude_patterns)
-
-            return original_pyproject
-
-        # No pyproject.toml in subfolder, create one from parent
-        self._used_subfolder_pyproject = False
-        print("No pyproject.toml found in subfolder, creating temporary one from parent")
 
         # Read the original pyproject.toml
         original_pyproject = self.project_root / "pyproject.toml"
