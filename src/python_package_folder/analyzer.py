@@ -330,56 +330,33 @@ class ImportAnalyzer:
 
             # Check all subdirectories in parent (not just common ones)
             # This handles cases like src/data/spreadsheet_creation/spreadsheet_formatting_dataclasses.py
-            if parent.is_dir():
+            # Use recursive search to find modules in nested directories
+            if parent.is_dir() and parent.is_relative_to(self.project_root):
+                # Recursively search for the module file in subdirectories
+                # Limit search to project_root and its subdirectories to avoid searching too broadly
+                module_basename = module_name.split(".")[-1]
                 try:
-                    for subdir in parent.iterdir():
-                        if not subdir.is_dir():
+                    # Search recursively for the module file
+                    for potential_file in parent.rglob(f"{module_basename}.py"):
+                        # Only search within project_root to avoid going too far
+                        if not potential_file.is_relative_to(self.project_root):
                             continue
-                        # Skip common excluded patterns
-                        if subdir.name.startswith("_SS") or subdir.name.startswith("__SS"):
-                            continue
-                        # Check if module file exists directly in subdirectory
-                        potential_subdir_file = subdir / f"{module_name.split('.')[-1]}.py"
-                        if potential_subdir_file.exists():
-                            return potential_subdir_file
-                        # Check if module directory exists in subdirectory
-                        potential_subdir_module = subdir / module_name.replace(".", "/")
-                        if (
-                            potential_subdir_module.is_dir()
-                            and (potential_subdir_module / "__init__.py").exists()
+                        # Skip excluded patterns
+                        if any(
+                            part.startswith("_SS")
+                            or part.startswith("__SS")
+                            or part.startswith("_sandbox")
+                            or part.startswith("__sandbox")
+                            for part in potential_file.parts
                         ):
-                            return potential_subdir_module / "__init__.py"
-                        if potential_subdir_module.with_suffix(".py").is_file():
-                            return potential_subdir_module.with_suffix(".py")
-                        # Check nested subdirectories (e.g., data/spreadsheet_creation)
-                        # Recursively check subdirectories up to 2 levels deep
-                        try:
-                            for nested_subdir in subdir.iterdir():
-                                if not nested_subdir.is_dir():
-                                    continue
-                                # Check if module file exists in nested subdirectory
-                                potential_nested_file = (
-                                    nested_subdir / f"{module_name.split('.')[-1]}.py"
-                                )
-                                if potential_nested_file.exists():
-                                    return potential_nested_file
-                                # Check if module directory exists in nested subdirectory
-                                potential_nested_module = nested_subdir / module_name.replace(
-                                    ".", "/"
-                                )
-                                if (
-                                    potential_nested_module.is_dir()
-                                    and (potential_nested_module / "__init__.py").exists()
-                                ):
-                                    return potential_nested_module / "__init__.py"
-                                if potential_nested_module.with_suffix(".py").is_file():
-                                    return potential_nested_module.with_suffix(".py")
-                        except (OSError, PermissionError):
-                            # Skip nested directories we can't read
                             continue
+                        # Skip if it's in the src_dir (we're looking for external dependencies)
+                        if potential_file.is_relative_to(src_dir):
+                            continue
+                        return potential_file
                 except (OSError, PermissionError):
-                    # Skip directories we can't read
-                    continue
+                    # Skip if we can't read the directory
+                    pass
 
             # Check common subdirectories in parent (e.g., _shared, shared, common)
             # This handles cases like src/_shared/better_enum.py
