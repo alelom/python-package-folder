@@ -255,28 +255,46 @@ class BuildManager:
                     # Fallback to just subfolder name if root project name not found
                     package_name = subfolder_name
 
-            print(
-                f"Detected subfolder build. Setting up package '{package_name}' version '{version}'..."
-            )
-            self.subfolder_config = SubfolderBuildConfig(
-                project_root=self.project_root,
-                src_dir=self.src_dir,
-                package_name=package_name,
-                version=version,
-                dependency_group=dependency_group,
-            )
-            temp_pyproject = self.subfolder_config.create_temp_pyproject()
-            # If temp_pyproject is None, it means no parent pyproject.toml exists
-            # This is acceptable for tests or dependency-only operations
-            if temp_pyproject is None:
-                self.subfolder_config = None
+            # Check if subfolder_config already exists with the same parameters
+            # This makes prepare_build() idempotent - safe to call multiple times
+            if (
+                self.subfolder_config
+                and self.subfolder_config.package_name == package_name
+                and self.subfolder_config.version == version
+                and self.subfolder_config.dependency_group == dependency_group
+                and self.subfolder_config._temp_package_dir
+                and self.subfolder_config._temp_package_dir.exists()
+            ):
+                print(
+                    f"Subfolder config already exists for '{package_name}' version '{version}', reusing it..."
+                )
+                # Still need to find external dependencies, so continue with that
+                # temp_pyproject should already exist from previous call
+                temp_pyproject = self.subfolder_config.temp_pyproject
             else:
+                print(
+                    f"Detected subfolder build. Setting up package '{package_name}' version '{version}'..."
+                )
+                self.subfolder_config = SubfolderBuildConfig(
+                    project_root=self.project_root,
+                    src_dir=self.src_dir,
+                    package_name=package_name,
+                    version=version,
+                    dependency_group=dependency_group,
+                )
+                temp_pyproject = self.subfolder_config.create_temp_pyproject()
+                # If temp_pyproject is None, it means no parent pyproject.toml exists
+                # This is acceptable for tests or dependency-only operations
+                if temp_pyproject is None:
+                    self.subfolder_config = None
+            
+            # If we have a subfolder_config (either newly created or reused), use temp package dir
+            if self.subfolder_config:
                 # If temporary package directory was created, use it for all operations
                 # This ensures dependencies are copied to the correct location and
                 # imports are fixed in the files that will actually be packaged
                 if (
-                    self.subfolder_config
-                    and self.subfolder_config._temp_package_dir
+                    self.subfolder_config._temp_package_dir
                     and self.subfolder_config._temp_package_dir.exists()
                 ):
                     # Update src_dir to point to temp package directory

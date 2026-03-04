@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import re
 import subprocess
 import sys
 from enum import Enum
@@ -284,10 +285,40 @@ class Publisher:
 
         if not dist_files:
             if self.package_name and self.version:
-                raise ValueError(
+                # Try to find what version was actually built
+                built_versions = set()
+                for dist_file in all_dist_files:
+                    # Extract version from filename: package-name-version-*.whl
+                    # Pattern: {package_name}-{version}-{...}
+                    if self.package_name.replace("-", "_") in dist_file.name or self.package_name in dist_file.name:
+                        # Try to extract version from filename
+                        parts = dist_file.stem.split("-")
+                        # Look for version-like pattern (e.g., 1.2.3)
+                        for i, part in enumerate(parts):
+                            if re.match(r"^\d+\.\d+\.\d+", part):
+                                built_versions.add(part)
+                                break
+                
+                error_msg = (
                     f"No distribution files found matching package '{self.package_name}' "
-                    f"version '{self.version}' in {self.dist_dir}"
+                    f"version '{self.version}' in {self.dist_dir}\n"
                 )
+                
+                if built_versions:
+                    error_msg += (
+                        f"  - Built package version(s): {', '.join(sorted(built_versions))}\n"
+                        f"  - Expected version for publishing: {self.version}\n"
+                        f"  - This usually indicates a version mismatch between the built package and the expected version.\n"
+                        f"  - Solution: The version in the subfolder's pyproject.toml will be automatically updated to match the derived version."
+                    )
+                else:
+                    error_msg += (
+                        f"  - No distribution files found for package '{self.package_name}' in {self.dist_dir}\n"
+                        f"  - Available files: {[f.name for f in all_dist_files[:5]]}"
+                        + (f" (and {len(all_dist_files) - 5} more)" if len(all_dist_files) > 5 else "")
+                    )
+                
+                raise ValueError(error_msg)
             else:
                 raise ValueError(f"No distribution files found in {self.dist_dir}")
 

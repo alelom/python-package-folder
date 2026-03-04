@@ -51,6 +51,17 @@ When publishing, the tool automatically filters distribution files to only uploa
 
 This ensures that when building a subfolder package, only that package's distribution files are uploaded, not files from previous builds of other packages.
 
+## Version Mismatch Detection
+
+If there's a version mismatch between the built package and the expected version (e.g., when a subfolder's `pyproject.toml` has a different version than the derived version), the error message will show:
+
+- What version was actually built
+- What version is expected for publishing
+- An explanation of the mismatch
+- A solution suggestion
+
+The tool automatically updates the version in the subfolder's `pyproject.toml` to match the derived version, so this error should only occur if the build process fails before the version update takes effect.
+
 To get a PyPI API token:
 1. Go to https://pypi.org/manage/account/token/
 2. Create a new API token

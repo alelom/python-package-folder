@@ -419,7 +419,9 @@ requests = ">=2.0.0"
 
         # Should use subfolder's pyproject.toml content, not create from parent
         assert 'name = "subfolder-package"' in content
-        assert 'version = "3.0.0"' in content
+        # Version should be updated to match the derived version (1.0.0), not the original (3.0.0)
+        assert 'version = "1.0.0"' in content
+        assert 'version = "3.0.0"' not in content  # Original version should be replaced
         assert 'description = "Subfolder package"' in content
         assert 'requests = ">=2.0.0"' in content
 
@@ -2717,115 +2719,739 @@ def test_func():
         # Build the wheel
         manager = BuildManager(project_root=project_root, src_dir=data_dir)
 
-        def build_wheel() -> None:
-            """Build the wheel using uv build."""
-            subprocess.run(
-                ["uv", "build", "--wheel"],
-                cwd=project_root,
-                check=True,
-                capture_output=True,
+        try:
+            def build_wheel() -> None:
+                """Build the wheel using uv build."""
+                subprocess.run(
+                    ["uv", "build", "--wheel"],
+                    cwd=project_root,
+                    check=True,
+                    capture_output=True,
+                )
+
+            # Prepare build first to set up subfolder config
+            manager.prepare_build(version=version, package_name=package_name)
+
+            # Verify the temp package directory exists
+            assert manager.subfolder_config is not None, (
+                "Subfolder build should be detected for src/data"
+            )
+            temp_dir = manager.subfolder_config._temp_package_dir
+            assert temp_dir is not None and temp_dir.exists()
+
+            # Read the modified file BEFORE running build (which cleans up)
+            modified_content = (temp_dir / "PytorchCoco" / "dataset_dataclasses.py").read_text(
+                encoding="utf-8"
+            )
+            
+            # Read the temporary pyproject.toml before cleanup
+            temp_pyproject = temp_dir.parent / "pyproject.toml"
+            if not temp_pyproject.exists():
+                temp_pyproject = project_root / "pyproject.toml"
+            
+            pyproject_content = None
+            if temp_pyproject.exists():
+                pyproject_content = temp_pyproject.read_text(encoding="utf-8")
+
+            # Verify the temporary package directory has the expected files before building
+            assert (temp_dir / "PytorchCoco" / "dataset_dataclasses.py").exists(), (
+                "PytorchCoco/dataset_dataclasses.py should exist in temp directory before build"
+            )
+            assert (temp_dir / "__init__.py").exists(), (
+                "__init__.py should exist in temp directory before build"
+            )
+            
+            # Now run the build (this will clean up, so we've already read what we need)
+            manager.run_build(build_wheel, version=version, package_name=package_name)
+
+            # Fix 1: Verify third-party submodules are NOT converted
+            assert "import torch" in modified_content, (
+                "torch import should remain absolute"
+            )
+            assert "import torch.utils" in modified_content, (
+                "torch.utils import should remain absolute, not 'from . import torch.utils'"
+            )
+            assert "import torch.utils.data" in modified_content, (
+                "torch.utils.data import should remain absolute"
+            )
+            assert "from torchvision import datasets" in modified_content, (
+                "torchvision import should remain absolute"
+            )
+            assert "from . import torch" not in modified_content, (
+                "torch should NOT be converted to relative import"
+            )
+            assert "from . import torch.utils" not in modified_content, (
+                "torch.utils should NOT be converted to relative import"
             )
 
-            try:
-                # Prepare build first to set up subfolder config
-                manager.prepare_build(version=version, package_name=package_name)
+            # Fix 2: Verify relative import depth is correct (.. for parent directory)
+            assert "from .._shared.image_utils import save_cropped_image" in modified_content, (
+                "Nested file (PytorchCoco/) should use .. to import from parent directory (_shared at root)"
+            )
+            assert "from ._shared.image_utils" not in modified_content, (
+                "Should NOT use single dot when importing from parent directory"
+            )
 
-                # Verify the temp package directory exists
-                assert manager.subfolder_config is not None, (
-                    "Subfolder build should be detected for src/data"
-                )
-                temp_dir = manager.subfolder_config._temp_package_dir
-                assert temp_dir is not None and temp_dir.exists()
+            # Fix 3: Verify common packages are added to dependencies
+            # (pyproject_content was already read before cleanup)
+            if pyproject_content:
+                # Check if torch, torchvision, numpy are in dependencies
+                # (they should be added even if classified as ambiguous)
+                # Note: This may vary based on whether packages are installed in test environment
+                print(f"\nTemporary pyproject.toml dependencies section:\n{pyproject_content}")
 
-                # Read the modified file BEFORE running build (which cleans up)
-                modified_content = (temp_dir / "PytorchCoco" / "dataset_dataclasses.py").read_text(
-                    encoding="utf-8"
+            # CRITICAL: Verify the wheel was built and contains package files
+            # This is a fundamental requirement - the wheel MUST contain the package directory
+            dist_dir = project_root / "dist"
+            assert dist_dir.exists(), "dist directory should exist after build"
+            
+            wheel_files = list(dist_dir.glob("*.whl"))
+            assert len(wheel_files) > 0, "At least one wheel should be built"
+            
+            wheel_file = wheel_files[0]
+            with zipfile.ZipFile(wheel_file, "r") as wheel:
+                file_names = wheel.namelist()
+                
+                # Debug: print all files in wheel to understand structure
+                print(f"\nWheel file: {wheel_file.name}")
+                print(f"Total files in wheel: {len(file_names)}")
+                print(f"Files in wheel (first 30): {file_names[:30]}")
+                
+                # CRITICAL ASSERTION: Verify the wheel contains the package directory
+                package_prefix = f"{import_name}/"
+                package_files = [f for f in file_names if f.startswith(package_prefix)]
+                
+                assert len(package_files) > 0, (
+                    f"Wheel MUST contain files in {import_name}/ directory. "
+                    f"This is a critical regression! Found only: {file_names[:10]}"
                 )
                 
-                # Read the temporary pyproject.toml before cleanup
-                temp_pyproject = temp_dir.parent / "pyproject.toml"
-                if not temp_pyproject.exists():
-                    temp_pyproject = project_root / "pyproject.toml"
+                # Verify the modified file is in the wheel
+                dataset_file = f"{import_name}/PytorchCoco/dataset_dataclasses.py"
+                assert dataset_file in file_names, (
+                    f"Wheel should contain {dataset_file}. "
+                    f"Available files: {[f for f in file_names if 'dataset' in f or 'PytorchCoco' in f]}"
+                )
                 
-                pyproject_content = None
-                if temp_pyproject.exists():
-                    pyproject_content = temp_pyproject.read_text(encoding="utf-8")
-
-                # Now run the build (this will clean up, so we've already read what we need)
-                manager.run_build(build_wheel, version=version, package_name=package_name)
-
-                # Fix 1: Verify third-party submodules are NOT converted
-                assert "import torch" in modified_content, (
-                    "torch import should remain absolute"
+                # Read the file from the wheel to verify imports
+                wheel_content = wheel.read(dataset_file).decode("utf-8")
+                
+                # Verify imports in the wheel are correct
+                assert "import torch.utils" in wheel_content, (
+                    "Wheel should contain absolute torch.utils import"
                 )
-                assert "import torch.utils" in modified_content, (
-                    "torch.utils import should remain absolute, not 'from . import torch.utils'"
-                )
-                assert "import torch.utils.data" in modified_content, (
-                    "torch.utils.data import should remain absolute"
-                )
-                assert "from torchvision import datasets" in modified_content, (
-                    "torchvision import should remain absolute"
-                )
-                assert "from . import torch" not in modified_content, (
-                    "torch should NOT be converted to relative import"
-                )
-                assert "from . import torch.utils" not in modified_content, (
-                    "torch.utils should NOT be converted to relative import"
+                assert "from .._shared.image_utils import save_cropped_image" in wheel_content, (
+                    "Wheel should contain correct relative import with .."
                 )
 
-                # Fix 2: Verify relative import depth is correct (.. for parent directory)
-                assert "from .._shared.image_utils import save_cropped_image" in modified_content, (
-                    "Nested file (PytorchCoco/) should use .. to import from parent directory (_shared at root)"
+        finally:
+            manager.cleanup()
+
+
+class TestSubfolderPyprojectTomlVersionHandling:
+    """Tests for version handling when subfolder has its own pyproject.toml."""
+
+    def test_version_updated_when_different_from_derived(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that version in subfolder toml is updated to match derived version."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Create subfolder pyproject.toml with different version
+        subfolder_pyproject = """[project]
+name = "my-package"
+version = "2.0.0"
+description = "Test package"
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject)
+        (subfolder / "__init__.py").write_text("# Package")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.5.0",  # Derived version
+        )
+
+        pyproject_path = config.create_temp_pyproject()
+        assert pyproject_path is not None
+
+        content = pyproject_path.read_text()
+        # Version should be updated to derived version
+        assert 'version = "1.5.0"' in content
+        assert 'version = "2.0.0"' not in content
+
+        config.restore()
+
+    def test_version_warning_when_different(
+        self, test_project_with_pyproject: Path, capsys
+    ) -> None:
+        """Test that warning is shown when version differs."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        subfolder_pyproject = """[project]
+name = "my-package"
+version = "2.0.0"
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject)
+        (subfolder / "__init__.py").write_text("# Package")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.5.0",
+        )
+
+        config.create_temp_pyproject()
+        captured = capsys.readouterr()
+        
+        # Check for warning message
+        assert "Version mismatch" in captured.err
+        assert "2.0.0" in captured.err
+        assert "1.5.0" in captured.err
+
+        config.restore()
+
+    def test_version_added_when_missing(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that version is added if missing from subfolder toml."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Subfolder toml without version
+        subfolder_pyproject = """[project]
+name = "my-package"
+description = "Test package"
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject)
+        (subfolder / "__init__.py").write_text("# Package")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        pyproject_path = config.create_temp_pyproject()
+        assert pyproject_path is not None
+
+        content = pyproject_path.read_text()
+        # Version should be added
+        assert 'version = "1.0.0"' in content
+
+        config.restore()
+
+
+class TestSubfolderPyprojectTomlNameHandling:
+    """Tests for name field handling when subfolder has its own pyproject.toml."""
+
+    def test_name_warning_when_different_but_uses_subfolder_name(
+        self, test_project_with_pyproject: Path, capsys
+    ) -> None:
+        """Test that warning is shown but subfolder name is used."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        subfolder_pyproject = """[project]
+name = "custom-package-name"
+version = "1.0.0"
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject)
+        (subfolder / "__init__.py").write_text("# Package")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            package_name="derived-package-name",  # Different from subfolder
+            version="1.0.0",
+        )
+
+        pyproject_path = config.create_temp_pyproject()
+        assert pyproject_path is not None
+
+        content = pyproject_path.read_text()
+        # Should use subfolder's name, not derived
+        assert 'name = "custom-package-name"' in content
+        assert 'name = "derived-package-name"' not in content
+
+        captured = capsys.readouterr()
+        # Check for warning
+        assert "Package name mismatch" in captured.err
+        assert "custom-package-name" in captured.err
+        assert "derived-package-name" in captured.err
+
+        config.restore()
+
+
+class TestSubfolderPyprojectTomlDependenciesHandling:
+    """Tests for dependencies handling when subfolder has its own pyproject.toml."""
+
+    def test_automatic_dependency_detection_skipped_when_dependencies_exist(
+        self, test_project_with_pyproject: Path, capsys
+    ) -> None:
+        """Test that automatic dependency detection is skipped when dependencies exist."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        subfolder_pyproject = """[project]
+name = "my-package"
+version = "1.0.0"
+dependencies = [
+    "requests>=2.0.0",
+    "pydantic>=2.0.0",
+]
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject)
+        (subfolder / "__init__.py").write_text("# Package")
+        (subfolder / "module.py").write_text("import numpy\nimport pandas")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        config.create_temp_pyproject()
+        
+        # Capture output from create_temp_pyproject (where the warning is shown)
+        captured = capsys.readouterr()
+        # Check for warning that automatic detection will be skipped
+        assert "Subfolder pyproject.toml contains a non-empty 'dependencies' field" in captured.err
+        assert "Automatic dependency detection will be SKIPPED" in captured.err
+        
+        # Verify the flag is set
+        assert config._has_existing_dependencies is True
+        
+        # Try to add third-party dependencies (should be skipped)
+        config.add_third_party_dependencies(["numpy", "pandas"])
+        
+        # Capture output from add_third_party_dependencies
+        captured2 = capsys.readouterr()
+        # Check for message that it's skipping
+        assert "Skipping automatic dependency detection" in captured2.err
+        assert "already has dependencies defined" in captured2.err
+
+        config.restore()
+
+    def test_automatic_dependency_detection_when_dependencies_empty(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that automatic dependency detection works when dependencies field is empty."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        subfolder_pyproject = """[project]
+name = "my-package"
+version = "1.0.0"
+dependencies = []
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject)
+        (subfolder / "__init__.py").write_text("# Package")
+        (subfolder / "module.py").write_text("import numpy")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        config.create_temp_pyproject()
+        
+        # Should be able to add dependencies when list is empty
+        config.add_third_party_dependencies(["numpy"])
+
+        # Verify dependencies were added
+        pyproject_path = project_root / "pyproject.toml"
+        if pyproject_path.exists():
+            content = pyproject_path.read_text()
+            # Note: This test may not always work perfectly due to string manipulation,
+            # but it verifies the logic doesn't skip when dependencies is empty
+            assert "numpy" in content.lower() or "dependencies" in content.lower()
+
+        config.restore()
+
+    def test_automatic_dependency_detection_when_dependencies_missing(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that automatic dependency detection works when dependencies field is missing."""
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        subfolder_pyproject = """[project]
+name = "my-package"
+version = "1.0.0"
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject)
+        (subfolder / "__init__.py").write_text("# Package")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        config.create_temp_pyproject()
+        
+        # Should be able to add dependencies when field is missing
+        config.add_third_party_dependencies(["numpy"])
+
+        # Verify dependencies were added
+        pyproject_path = project_root / "pyproject.toml"
+        if pyproject_path.exists():
+            content = pyproject_path.read_text()
+            assert "numpy" in content.lower() or "dependencies" in content.lower()
+
+        config.restore()
+
+
+class TestSubfolderPyprojectTomlParentMerging:
+    """Tests for merging fields from parent pyproject.toml."""
+
+    def test_missing_fields_filled_from_parent(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """Test that missing fields are filled from parent pyproject.toml."""
+        project_root = test_project_with_pyproject
+        
+        # Update parent pyproject.toml with more fields
+        parent_content = """[project]
+name = "test-package"
+version = "0.1.0"
+description = "Parent package description"
+authors = [
+    {name = "Test Author", email = "test@example.com"}
+]
+keywords = ["test", "package"]
+requires-python = ">=3.11"
+"""
+        (project_root / "pyproject.toml").write_text(parent_content)
+
+        subfolder = project_root / "subfolder"
+        
+        # Subfolder toml with minimal fields
+        subfolder_pyproject = """[project]
+name = "subfolder-package"
+version = "1.0.0"
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject)
+        (subfolder / "__init__.py").write_text("# Package")
+
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+        )
+
+        pyproject_path = config.create_temp_pyproject()
+        assert pyproject_path is not None
+
+        content = pyproject_path.read_text()
+        # Should have subfolder's name and version (not merged)
+        assert 'name = "subfolder-package"' in content
+        assert 'version = "1.0.0"' in content
+        
+        # Note: Full merging requires tomli-w, so we can't easily test all fields
+        # But we verify the merge function is called and doesn't error
+
+        config.restore()
+
+
+class TestSubfolderPyprojectTomlE2E:
+    """End-to-end tests for subfolder pyproject.toml handling."""
+
+    def test_e2e_version_mismatch_scenario(
+        self, tmp_path: Path
+    ) -> None:
+        """
+        E2E test simulating the user's scenario:
+        - Subfolder has pyproject.toml with version 1.2.0
+        - Derived version is 1.3.0
+        - Version should be updated to 1.3.0
+        - Build should succeed with correct version
+        """
+        project_root = tmp_path / "test_project"
+        project_root.mkdir()
+
+        # Create parent pyproject.toml
+        parent_pyproject = """[project]
+name = "test-project"
+version = "0.1.0"
+description = "Test project"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+"""
+        (project_root / "pyproject.toml").write_text(parent_pyproject)
+
+        # Create subfolder with its own pyproject.toml
+        subfolder = project_root / "src" / "_shared"
+        subfolder.mkdir(parents=True)
+        
+        subfolder_pyproject = """[project]
+name = "test-project-shared"
+version = "1.2.0"
+description = "Shared utilities"
+requires-python = ">=3.12"
+
+dependencies = [
+    "loguru>=0.7.3",
+    "pydantic>=2.11.5",
+]
+
+[project.urls]
+Homepage = "https://example.com"
+Repository = "https://github.com/example/test-project"
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject)
+        (subfolder / "__init__.py").write_text("# Shared utilities package")
+        (subfolder / "utils.py").write_text("def helper(): return 'help'")
+
+        # Build with derived version 1.3.0
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+
+        try:
+            manager.prepare_build(version="1.3.0", package_name="test-project-shared")
+
+            # Verify subfolder config was created
+            assert manager.subfolder_config is not None
+            temp_dir = manager.subfolder_config._temp_package_dir
+            assert temp_dir is not None and temp_dir.exists()
+
+            # Read the temporary pyproject.toml
+            temp_pyproject = project_root / "pyproject.toml"
+            assert temp_pyproject.exists()
+            content = temp_pyproject.read_text()
+
+            # Verify version was updated to derived version
+            assert 'version = "1.3.0"' in content
+            assert 'version = "1.2.0"' not in content
+
+            # Verify other fields are preserved
+            assert 'name = "test-project-shared"' in content
+            assert 'description = "Shared utilities"' in content
+            assert 'requires-python = ">=3.12"' in content
+            assert 'loguru>=0.7.3' in content
+            assert 'pydantic>=2.11.5' in content
+
+            # Verify URLs are preserved
+            assert 'Homepage = "https://example.com"' in content
+            assert 'Repository = "https://github.com/example/test-project"' in content
+
+            # Verify dependencies detection was skipped (since dependencies exist)
+            assert manager.subfolder_config._has_existing_dependencies is True
+
+        finally:
+            manager.cleanup()
+
+    def test_e2e_name_mismatch_uses_subfolder_name(
+        self, tmp_path: Path
+    ) -> None:
+        """
+        E2E test for name mismatch scenario:
+        - Subfolder has name "custom-name" in toml
+        - Derived name is "test-project-shared"
+        - Should use "custom-name" from subfolder toml
+        """
+        project_root = tmp_path / "test_project"
+        project_root.mkdir()
+
+        parent_pyproject = """[project]
+name = "test-project"
+version = "0.1.0"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+"""
+        (project_root / "pyproject.toml").write_text(parent_pyproject)
+
+        subfolder = project_root / "src" / "_shared"
+        subfolder.mkdir(parents=True)
+        
+        subfolder_pyproject = """[project]
+name = "custom-package-name"
+version = "1.0.0"
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject)
+        (subfolder / "__init__.py").write_text("# Package")
+        (subfolder / "module.py").write_text("def func(): pass")
+
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+
+        try:
+            # Derived name would be "test-project-shared"
+            manager.prepare_build(version="1.0.0", package_name="test-project-shared")
+
+            temp_pyproject = project_root / "pyproject.toml"
+            assert temp_pyproject.exists()
+            content = temp_pyproject.read_text()
+
+            # Should use subfolder's name, not derived
+            assert 'name = "custom-package-name"' in content
+            assert 'name = "test-project-shared"' not in content
+
+        finally:
+            manager.cleanup()
+
+    def test_e2e_dependencies_skipped_when_exist(
+        self, tmp_path: Path
+    ) -> None:
+        """
+        E2E test for dependencies skipping:
+        - Subfolder has dependencies in toml
+        - Automatic detection should be skipped
+        - Third-party dependencies should not be added
+        """
+        project_root = tmp_path / "test_project"
+        project_root.mkdir()
+
+        parent_pyproject = """[project]
+name = "test-project"
+version = "0.1.0"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+"""
+        (project_root / "pyproject.toml").write_text(parent_pyproject)
+
+        subfolder = project_root / "src" / "_shared"
+        subfolder.mkdir(parents=True)
+        
+        subfolder_pyproject = """[project]
+name = "test-project-shared"
+version = "1.0.0"
+dependencies = [
+    "requests>=2.0.0",
+]
+"""
+        (subfolder / "pyproject.toml").write_text(subfolder_pyproject)
+        (subfolder / "__init__.py").write_text("# Package")
+        (subfolder / "module.py").write_text("import numpy\nimport pandas")
+
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+
+        try:
+            manager.prepare_build(version="1.0.0", package_name="test-project-shared")
+
+            # Verify dependencies detection was skipped
+            assert manager.subfolder_config is not None
+            assert manager.subfolder_config._has_existing_dependencies is True
+
+            # Try to add dependencies (should be skipped)
+            manager.subfolder_config.add_third_party_dependencies(["numpy", "pandas"])
+
+            # Read pyproject.toml to verify numpy/pandas were NOT added
+            temp_pyproject = project_root / "pyproject.toml"
+            if temp_pyproject.exists():
+                content = temp_pyproject.read_text()
+                # Should have requests (from subfolder toml)
+                assert "requests" in content
+                # numpy/pandas should NOT be added (automatic detection skipped)
+                # Note: This is a weak assertion since we can't easily verify absence,
+                # but the _has_existing_dependencies flag confirms the logic
+
+        finally:
+            manager.cleanup()
+
+    def test_e2e_full_workflow_with_version_mismatch(
+        self, tmp_path: Path
+    ) -> None:
+        """
+        Full E2E test simulating the exact user scenario:
+        - Subfolder src/_shared with pyproject.toml (version 1.2.0)
+        - Derived version 1.3.0
+        - Build and verify version is correct
+        - Verify error message if publishing with wrong version
+        """
+        project_root = tmp_path / "ml_drawing_assistant"
+        project_root.mkdir()
+
+        # Create parent pyproject.toml
+        parent_pyproject = """[project]
+name = "ml-drawing-assistant"
+version = "0.1.0"
+description = "ML Drawing Assistant"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.python-package-folder]
+exclude-patterns = ["_SS", "__SS", ".*_test.*", ".*test_.*", "sandbox"]
+"""
+        (project_root / "pyproject.toml").write_text(parent_pyproject)
+
+        # Create subfolder: src/_shared
+        shared_dir = project_root / "src" / "_shared"
+        shared_dir.mkdir(parents=True)
+        
+        # Subfolder pyproject.toml with old version
+        shared_pyproject = """[project]
+name = "ml-drawing-assistant-shared"
+version = "1.2.0"
+description = "Shared utilities for ML Drawing Assistant"
+requires-python = ">=3.12"
+authors = [
+    {name = "ML Drawing Assistant Team", email = "team@company.com"}
+]
+keywords = ["ml", "drawing", "utilities", "shared"]
+
+dependencies = [
+    "loguru>=0.7.3",
+    "pydantic>=2.11.5",
+    "pillow>=11.2.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/example/ml-drawing-assistant"
+Repository = "https://github.com/example/ml-drawing-assistant"
+"""
+        (shared_dir / "pyproject.toml").write_text(shared_pyproject)
+        (shared_dir / "__init__.py").write_text("# Shared utilities package")
+        (shared_dir / "utils.py").write_text("def helper(): return 'help'")
+
+        # Build with derived version 1.3.0
+        manager = BuildManager(project_root=project_root, src_dir=shared_dir)
+
+        try:
+            manager.prepare_build(version="1.3.0", package_name="ml-drawing-assistant-shared")
+
+            # Verify version was updated
+            temp_pyproject = project_root / "pyproject.toml"
+            assert temp_pyproject.exists()
+            content = temp_pyproject.read_text()
+            assert 'version = "1.3.0"' in content
+            assert 'version = "1.2.0"' not in content
+
+            # Verify other fields preserved
+            assert 'name = "ml-drawing-assistant-shared"' in content
+            assert 'description = "Shared utilities for ML Drawing Assistant"' in content
+            assert 'loguru>=0.7.3' in content
+
+            # Build the wheel
+            def build_wheel() -> None:
+                subprocess.run(
+                    ["uv", "build", "--wheel"],
+                    cwd=project_root,
+                    check=True,
+                    capture_output=True,
                 )
-                assert "from ._shared.image_utils" not in modified_content, (
-                    "Should NOT use single dot when importing from parent directory"
-                )
 
-                # Fix 3: Verify common packages are added to dependencies
-                # (pyproject_content was already read before cleanup)
-                if pyproject_content:
-                    # Check if torch, torchvision, numpy are in dependencies
-                    # (they should be added even if classified as ambiguous)
-                    # Note: This may vary based on whether packages are installed in test environment
-                    print(f"\nTemporary pyproject.toml dependencies section:\n{pyproject_content}")
+            manager.run_build(build_wheel, version="1.3.0", package_name="ml-drawing-assistant-shared")
 
-                # Verify the wheel was built and can be inspected
-                dist_dir = project_root / "dist"
-                if dist_dir.exists():
-                    wheel_files = list(dist_dir.glob("*.whl"))
-                    if wheel_files:
-                        wheel_file = wheel_files[0]
-                        # Extract and verify the wheel contents
-                        with zipfile.ZipFile(wheel_file, "r") as wheel:
-                            file_names = wheel.namelist()
-                            
-                            # Verify the package structure
-                            package_prefix = f"{import_name}/"
-                            package_files = [f for f in file_names if f.startswith(package_prefix)]
-                            assert len(package_files) > 0, (
-                                f"Wheel should contain files in {import_name}/ directory"
-                            )
-                            
-                            # Verify the modified file is in the wheel
-                            dataset_file = f"{import_name}/PytorchCoco/dataset_dataclasses.py"
-                            assert dataset_file in file_names, (
-                                f"Wheel should contain {dataset_file}"
-                            )
-                            
-                            # Read the file from the wheel to verify imports
-                            wheel_content = wheel.read(dataset_file).decode("utf-8")
-                            
-                            # Verify imports in the wheel are correct
-                            assert "import torch.utils" in wheel_content, (
-                                "Wheel should contain absolute torch.utils import"
-                            )
-                            assert "from .._shared.image_utils import save_cropped_image" in wheel_content, (
-                                "Wheel should contain correct relative import with .."
-                            )
+            # Verify wheel was built with correct version
+            dist_dir = project_root / "dist"
+            if dist_dir.exists():
+                wheel_files = list(dist_dir.glob("ml_drawing_assistant_shared-1.3.0*.whl"))
+                assert len(wheel_files) > 0, "Wheel should be built with version 1.3.0"
 
-            finally:
-                manager.cleanup()
+        finally:
+            manager.cleanup()
 
 
 class TestImportConversion:

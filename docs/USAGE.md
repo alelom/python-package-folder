@@ -75,7 +75,13 @@ The tool automatically:
 - Uses the current directory as the source directory if it contains Python files
 - Falls back to `project_root/src` if the current directory isn't suitable
 - **For subfolder builds**: Handles `pyproject.toml` configuration:
-  - **If `pyproject.toml` exists in subfolder**: Uses that file (copies it to project root temporarily, adjusting package paths and ensuring `[build-system]` uses hatchling)
+  - **If `pyproject.toml` exists in subfolder**: 
+    - Uses that file (copies it to project root temporarily, adjusting package paths and ensuring `[build-system]` uses hatchling)
+    - **Version handling**: The version in the subfolder's `pyproject.toml` is automatically updated to match the derived version (from conventional commits or `--version` argument). A warning is shown if versions differ.
+    - **Name handling**: If the subfolder's `pyproject.toml` has a `name` field that differs from the derived name, a warning is shown but the subfolder's name is used (not the derived one).
+    - **Dependencies handling**: If the subfolder's `pyproject.toml` has a non-empty `dependencies` field, automatic dependency detection is skipped with a warning. To enable automatic detection, remove or empty the `dependencies` field.
+    - **Field merging**: Missing fields (like `description`, `authors`, `keywords`, `classifiers`, `license`, `urls`, etc.) are automatically filled from the parent `pyproject.toml` if available.
+    - **Exclude patterns**: Exclude patterns from the parent `pyproject.toml` are merged into the subfolder's configuration.
   - **If no `pyproject.toml` in subfolder**: Creates a temporary `pyproject.toml` with:
     - `[build-system]` section using hatchling (always uses hatchling, even if parent uses setuptools)
     - Package name derived from the subfolder name (e.g., `empty_drawing_detection` → `empty-drawing-detection`)
@@ -101,10 +107,31 @@ python-package-folder --version "0.1.0" --package-name "my-subfolder-package" --
 python-package-folder --version "0.1.0" --dependency-group "dev" --publish pypi
 
 # If subfolder has its own pyproject.toml, it will be used automatically
-# (package-name and version arguments are ignored in this case)
+# The version will be updated to match the derived version (from conventional commits)
+# The package name from the subfolder toml will be used (even if it differs from derived)
 cd src/integration/my_package  # assuming my_package/pyproject.toml exists
 python-package-folder --publish pypi
 ```
+
+**Subfolder `pyproject.toml` Behavior:**
+
+When a subfolder has its own `pyproject.toml`, the tool intelligently merges it with derived information:
+
+1. **Version**: Always updated to match the derived version (from conventional commits or `--version`). If the subfolder's version differs, a warning is shown but the derived version is used.
+
+2. **Name**: If the subfolder's `pyproject.toml` has a `name` field, it takes precedence over the derived name. A warning is shown if they differ.
+
+3. **Dependencies**: 
+   - If the subfolder's `pyproject.toml` has a non-empty `dependencies` field, automatic dependency detection is **skipped** (with a warning).
+   - To enable automatic dependency detection, remove or empty the `dependencies` field in the subfolder's `pyproject.toml`.
+   - If the `dependencies` field is empty or missing, automatic detection proceeds normally.
+
+4. **Field Merging**: Missing fields are automatically filled from the parent `pyproject.toml`:
+   - `description`, `readme`, `requires-python`, `authors`, `keywords`, `classifiers`, `license`
+   - `[project.urls]` section
+   - Other `[tool.*]` sections (except `tool.hatch.build.*` and `tool.python-package-folder.*`)
+
+5. **Exclude Patterns**: Automatically merged from parent `pyproject.toml`.
 
 **Dependency Groups**: When building a subfolder, you can specify a dependency group from the parent `pyproject.toml` to include in the subfolder's build configuration. This allows subfolders to inherit specific dependencies from the parent project:
 

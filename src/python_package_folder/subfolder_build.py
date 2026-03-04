@@ -79,6 +79,7 @@ class SubfolderBuildConfig:
         self._excluded_files: list[tuple[Path, Path]] = []  # List of (original_path, temp_path) tuples
         self._exclude_temp_dir: Path | None = None
         self._temp_package_dir: Path | None = None
+        self._has_existing_dependencies = False  # Track if subfolder toml has dependencies
 
     def _derive_package_name(self) -> str:
         """
@@ -549,6 +550,361 @@ class SubfolderBuildConfig:
 
         return "\n".join(result)
 
+    def _update_version_in_pyproject(self, content: str) -> str:
+        """
+        Update the version in pyproject.toml content to match self.version.
+        
+        Also checks if version differs and warns the user.
+        
+        Args:
+            content: Content of pyproject.toml
+            
+        Returns:
+            Content with updated version
+        """
+        if not self.version:
+            return content
+        
+        lines = content.split("\n")
+        result = []
+        in_project_section = False
+        version_set = False
+        existing_version = None
+        
+        for line in lines:
+            # Detect [project] section
+            if line.strip() == "[project]":
+                in_project_section = True
+                result.append(line)
+                continue
+            elif line.strip().startswith("[") and in_project_section:
+                # End of [project] section - add version if not set
+                if not version_set:
+                    result.append(f'version = "{self.version}"')
+                    version_set = True
+                in_project_section = False
+                result.append(line)
+            elif in_project_section:
+                # Check if this is a version line
+                version_match = re.match(r'^\s*version\s*=\s*["\']([^"\']+)["\']', line)
+                if version_match:
+                    existing_version = version_match.group(1)
+                    result.append(f'version = "{self.version}"')
+                    version_set = True
+                    continue  # Skip the original version line
+                else:
+                    result.append(line)
+            else:
+                result.append(line)
+        
+        # If we never found [project] section or version wasn't set, add it
+        if not version_set:
+            # Try to find where to insert it - after [project] if it exists
+            if "[project]" in content:
+                # Insert after [project] line
+                new_lines = []
+                inserted = False
+                for i, line in enumerate(lines):
+                    new_lines.append(line)
+                    if line.strip() == "[project]" and not inserted:
+                        # Insert version right after [project]
+                        new_lines.append(f'version = "{self.version}"')
+                        inserted = True
+                result = new_lines
+            else:
+                # No [project] section, add it at the beginning
+                result.insert(0, "[project]")
+                result.insert(1, f'version = "{self.version}"')
+        
+        # Warn if version differs
+        if existing_version and existing_version != self.version:
+            print(
+                f"\nWarning: Version mismatch in subfolder pyproject.toml",
+                file=sys.stderr,
+            )
+            print(
+                f"  - Version in file: {existing_version}",
+                file=sys.stderr,
+            )
+            print(
+                f"  - Derived version: {self.version} (from conventional commits/CLI)",
+                file=sys.stderr,
+            )
+            print(
+                f"  - Using derived version: {self.version}",
+                file=sys.stderr,
+            )
+            print(
+                f"  - The version in the subfolder's pyproject.toml will be updated for this build.\n",
+                file=sys.stderr,
+            )
+        
+        return "\n".join(result)
+
+    def _check_and_warn_about_dependencies(self, content: str) -> bool:
+        """
+        Check if subfolder pyproject.toml has a non-empty dependencies field.
+        
+        Args:
+            content: Content of pyproject.toml
+            
+        Returns:
+            True if dependencies field exists and is non-empty, False otherwise
+        """
+        if not tomllib:
+            # Fallback: simple regex check
+            # Look for dependencies = [...] pattern
+            deps_match = re.search(r'^\s*dependencies\s*=\s*\[', content, re.MULTILINE)
+            if deps_match:
+                # Try to find if there are any dependencies in the list
+                # This is a simple heuristic - look for non-empty content between [ and ]
+                lines = content.split("\n")
+                in_project = False
+                in_dependencies = False
+                dependency_count = 0
+                
+                for line in lines:
+                    if line.strip() == "[project]":
+                        in_project = True
+                    elif line.strip().startswith("[") and in_project:
+                        in_project = False
+                    elif in_project and re.match(r"^\s*dependencies\s*=\s*\[", line):
+                        in_dependencies = True
+                        # Check if line has content after [
+                        if "]" not in line:
+                            # Multi-line dependencies
+                            continue
+                        else:
+                            # Single line: dependencies = ["pkg1", "pkg2"]
+                            deps_str = line.split("[", 1)[1].rsplit("]", 1)[0]
+                            if deps_str.strip():
+                                return True
+                            return False
+                    elif in_dependencies:
+                        # Check if this line has a dependency (not just whitespace or closing bracket)
+                        stripped = line.strip()
+                        if stripped and not stripped.startswith("#") and stripped != "]":
+                            # Check if it looks like a dependency string
+                            if re.search(r'["\'][^"\']+["\']', stripped):
+                                dependency_count += 1
+                        if "]" in line:
+                            return dependency_count > 0
+                
+                return dependency_count > 0
+            return False
+        
+        # Use tomllib for more accurate parsing
+        try:
+            data = tomllib.loads(content.encode())
+            project = data.get("project", {})
+            dependencies = project.get("dependencies", [])
+            
+            # Check if dependencies list is non-empty
+            if dependencies and len(dependencies) > 0:
+                return True
+            return False
+        except Exception:
+            # If parsing fails, fall back to regex-based check
+            # Look for dependencies = [...] pattern
+            deps_match = re.search(r'^\s*dependencies\s*=\s*\[', content, re.MULTILINE)
+            if deps_match:
+                # Try to find if there are any dependencies in the list
+                lines = content.split("\n")
+                in_project = False
+                in_dependencies = False
+                dependency_count = 0
+                
+                for line in lines:
+                    if line.strip() == "[project]":
+                        in_project = True
+                    elif line.strip().startswith("[") and in_project:
+                        in_project = False
+                    elif in_project and re.match(r"^\s*dependencies\s*=\s*\[", line):
+                        in_dependencies = True
+                        # Check if line has content after [
+                        if "]" not in line:
+                            # Multi-line dependencies
+                            continue
+                        else:
+                            # Single line: dependencies = ["pkg1", "pkg2"]
+                            deps_str = line.split("[", 1)[1].rsplit("]", 1)[0]
+                            if deps_str.strip():
+                                return True
+                            return False
+                    elif in_dependencies:
+                        # Check if this line has a dependency (not just whitespace or closing bracket)
+                        stripped = line.strip()
+                        if stripped and not stripped.startswith("#") and stripped != "]":
+                            # Check if it looks like a dependency string
+                            if re.search(r'["\'][^"\']+["\']', stripped):
+                                dependency_count += 1
+                        if "]" in line:
+                            return dependency_count > 0
+                
+                return dependency_count > 0
+            return False
+
+    def _check_and_warn_about_name(self, content: str) -> str | None:
+        """
+        Check if subfolder pyproject.toml has a name field and warn if it differs from derived.
+        
+        Args:
+            content: Content of pyproject.toml
+            
+        Returns:
+            Name from subfolder toml if found, None otherwise
+        """
+        if not tomllib:
+            # Fallback: simple regex check
+            name_match = re.search(r'^\s*name\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
+            if name_match:
+                return name_match.group(1)
+            return None
+        
+        # Use tomllib for more accurate parsing
+        try:
+            data = tomllib.loads(content.encode())
+            project = data.get("project", {})
+            name = project.get("name")
+            return name
+        except Exception:
+            # If parsing fails, fall back to regex
+            name_match = re.search(r'^\s*name\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
+            if name_match:
+                return name_match.group(1)
+            return None
+
+    def _merge_from_parent_pyproject(self, subfolder_content: str, parent_content: str) -> str:
+        """
+        Merge missing fields from parent pyproject.toml into subfolder content.
+        
+        Priority: subfolder > parent (only fill missing fields from parent)
+        
+        This uses string manipulation to add missing fields since we don't have tomli-w
+        for proper TOML round-trip. Only common fields are merged.
+        
+        Args:
+            subfolder_content: Content of subfolder pyproject.toml
+            parent_content: Content of parent pyproject.toml
+            
+        Returns:
+            Merged content
+        """
+        if not tomllib:
+            # If tomllib not available, return subfolder content as-is
+            return subfolder_content
+        
+        try:
+            subfolder_data = tomllib.loads(subfolder_content.encode())
+            parent_data = tomllib.loads(parent_content.encode())
+            
+            # Fields to merge from parent if missing in subfolder
+            fields_to_merge = [
+                "description", "readme", "requires-python", "authors", 
+                "keywords", "classifiers", "license", "urls"
+            ]
+            
+            # Check what's missing and needs to be added
+            missing_fields = []
+            if "project" in parent_data and "project" in subfolder_data:
+                parent_project = parent_data["project"]
+                subfolder_project = subfolder_data["project"]
+                
+                for field in fields_to_merge:
+                    if field not in subfolder_project and field in parent_project:
+                        missing_fields.append((field, parent_project[field]))
+            
+            # If no missing fields, return as-is
+            if not missing_fields:
+                return subfolder_content
+            
+            # Add missing fields using string manipulation
+            # Find [project] section and add fields after it
+            lines = subfolder_content.split("\n")
+            result = []
+            in_project = False
+            project_section_end = -1
+            
+            for i, line in enumerate(lines):
+                if line.strip() == "[project]":
+                    in_project = True
+                    result.append(line)
+                elif line.strip().startswith("[") and in_project:
+                    # End of [project] section - insert missing fields here
+                    project_section_end = i
+                    in_project = False
+                    # Add missing fields before the next section
+                    for field_name, field_value in missing_fields:
+                        if field_name == "urls" and isinstance(field_value, dict):
+                            # Handle [project.urls] separately
+                            continue
+                        # Format the field value appropriately
+                        formatted = self._format_toml_value(field_name, field_value)
+                        if formatted:
+                            result.append(formatted)
+                    result.append(line)
+                else:
+                    result.append(line)
+            
+            # Handle [project.urls] separately if it exists in parent
+            if "project" in parent_data and "urls" in parent_data["project"]:
+                urls = parent_data["project"]["urls"]
+                if isinstance(urls, dict) and "project.urls" not in subfolder_content:
+                    # Add [project.urls] section at the end
+                    result.append("")
+                    result.append("[project.urls]")
+                    for key, value in urls.items():
+                        result.append(f'{key} = "{value}"')
+            
+            return "\n".join(result)
+            
+        except Exception as e:
+            print(
+                f"Warning: Could not merge from parent pyproject.toml: {e}. Using subfolder content as-is.",
+                file=sys.stderr,
+            )
+            return subfolder_content
+    
+    def _format_toml_value(self, field_name: str, value: any) -> str | None:
+        """
+        Format a TOML field value as a string.
+        
+        Args:
+            field_name: Name of the field
+            value: Value to format
+            
+        Returns:
+            Formatted string or None if cannot format
+        """
+        if value is None:
+            return None
+        
+        if isinstance(value, str):
+            return f'{field_name} = "{value}"'
+        elif isinstance(value, list):
+            if not value:
+                return None
+            # Format list items
+            if isinstance(value[0], dict):
+                # List of dicts (e.g., authors)
+                items = []
+                for item in value:
+                    if isinstance(item, dict):
+                        # Format as inline table: {name = "...", email = "..."}
+                        parts = [f'{k} = "{v}"' for k, v in item.items() if v]
+                        items.append("{" + ", ".join(parts) + "}")
+                return f"{field_name} = [\n    " + ",\n    ".join(items) + "\n]"
+            else:
+                # List of strings
+                items = [f'"{v}"' for v in value]
+                return f"{field_name} = [\n    " + ",\n    ".join(items) + "\n]"
+        elif isinstance(value, bool):
+            return f"{field_name} = {str(value).lower()}"
+        elif isinstance(value, (int, float)):
+            return f"{field_name} = {value}"
+        else:
+            return None
+
     def create_temp_pyproject(self) -> Path | None:
         """
         Create a temporary pyproject.toml for the subfolder build.
@@ -634,10 +990,63 @@ class SubfolderBuildConfig:
                 # Create temporary pyproject.toml file
                 temp_pyproject_path = self.project_root / "pyproject.toml.temp"
 
+                # Check for name mismatch and warn (but use subfolder name)
+                subfolder_name = self._check_and_warn_about_name(subfolder_content)
+                if subfolder_name and subfolder_name != self.package_name:
+                    print(
+                        f"\nWarning: Package name mismatch in subfolder pyproject.toml",
+                        file=sys.stderr,
+                    )
+                    print(
+                        f"  - Name in file: {subfolder_name}",
+                        file=sys.stderr,
+                    )
+                    print(
+                        f"  - Derived name: {self.package_name}",
+                        file=sys.stderr,
+                    )
+                    print(
+                        f"  - Using name from subfolder toml: {subfolder_name}\n",
+                        file=sys.stderr,
+                    )
+                    # Update package_name to use subfolder's name
+                    self.package_name = subfolder_name
+                
+                # Check for dependencies and warn if automatic detection will be skipped
+                self._has_existing_dependencies = self._check_and_warn_about_dependencies(subfolder_content)
+                if self._has_existing_dependencies:
+                    print(
+                        f"\nWarning: Subfolder pyproject.toml contains a non-empty 'dependencies' field.",
+                        file=sys.stderr,
+                    )
+                    print(
+                        f"  - Automatic dependency detection will be SKIPPED.",
+                        file=sys.stderr,
+                    )
+                    print(
+                        f"  - To enable automatic dependency detection, remove or empty the 'dependencies' field in the subfolder's pyproject.toml.\n",
+                        file=sys.stderr,
+                    )
+                
+                # Merge missing fields from parent pyproject.toml if it exists
+                if original_pyproject.exists():
+                    try:
+                        parent_content = original_pyproject.read_text(encoding="utf-8")
+                        subfolder_content = self._merge_from_parent_pyproject(subfolder_content, parent_content)
+                    except Exception as e:
+                        print(
+                            f"Warning: Could not merge from parent pyproject.toml: {e}",
+                            file=sys.stderr,
+                        )
+                
                 # Adjust packages path to be relative to project root
                 # This must be called AFTER _create_temp_package_directory() so _get_package_structure() 
                 # can find the temporary directory
                 adjusted_content = self._adjust_subfolder_pyproject_packages_path(subfolder_content)
+                
+                # Update version in subfolder pyproject.toml to match calculated version
+                # This ensures the built package version matches what we're trying to publish
+                adjusted_content = self._update_version_in_pyproject(adjusted_content)
                 
                 # Read exclude patterns from root pyproject.toml and inject them (if it exists)
                 exclude_patterns = []
@@ -1213,6 +1622,14 @@ class SubfolderBuildConfig:
         Args:
             dependencies: List of third-party package names to add (e.g., ["pypdf", "requests"])
         """
+        # Skip if subfolder toml already has dependencies
+        if self._has_existing_dependencies:
+            print(
+                f"Skipping automatic dependency detection - subfolder pyproject.toml already has dependencies defined.",
+                file=sys.stderr,
+            )
+            return
+        
         if not self.temp_pyproject or not self.temp_pyproject.exists():
             print(
                 f"Warning: Cannot add third-party dependencies - pyproject.toml not found at {self.temp_pyproject}",
