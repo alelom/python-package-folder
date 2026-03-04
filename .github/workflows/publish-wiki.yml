@@ -1,0 +1,239 @@
+name: Publish Documentation to Wiki
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'docs/**'
+      - '.github/workflows/publish-wiki.yml'
+  workflow_dispatch: # Enable manual trigger
+
+jobs:
+  publish-wiki:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to push to wiki
+    steps:
+      - name: Checkout main repository
+        uses: actions/checkout@v4
+        with:
+          path: main-repo
+
+      - name: Checkout wiki repository
+        uses: actions/checkout@v4
+        with:
+          repository: alelom/python-package-folder.wiki
+          path: wiki-repo
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true # Continue if wiki doesn't exist yet
+
+      - name: Copy and fix documentation files
+        run: |
+          cd main-repo
+          
+          # Ensure wiki-repo directory exists
+          mkdir -p ../wiki-repo
+          
+          # Function to convert filename to wiki page name
+          # This handles the mapping from source docs to wiki pages
+          filename_to_wiki_name() {
+            local filename="$1"
+            # Remove .md extension and path
+            local name="${filename%.md}"
+            name="${name##*/}"  # Get just the filename
+            name="${name^^}"    # Convert to uppercase for matching
+            
+            # Special case mappings
+            case "$name" in
+              REFERENCE)
+                echo "API-Reference"
+                ;;
+              *)
+                # Convert underscores to hyphens and to Title Case
+                echo "$name" | sed 's/_/-/g' | sed 's/\b\(.\)/\u\1/g' | sed 's/-\(.\)/-\u\1/g'
+                ;;
+            esac
+          }
+          
+          # Copy all documentation files and convert to wiki format
+          for doc_file in docs/*.md; do
+            if [ ! -f "$doc_file" ]; then
+              continue
+            fi
+            
+            # Get base filename
+            basename=$(basename "$doc_file")
+            wiki_name=$(filename_to_wiki_name "$basename")
+            
+            # Copy file to wiki with new name
+            cp "$doc_file" "../wiki-repo/${wiki_name}.md"
+            
+            echo "Copied $basename -> ${wiki_name}.md"
+          done
+          
+          # Fix all cross-references using Python script
+          # The script automatically detects and fixes all markdown links
+          python3 << 'PYTHON_SCRIPT'
+          import re
+          from pathlib import Path
+          
+          def filename_to_wiki_name(filename):
+              """Convert markdown filename to wiki page name."""
+              name = Path(filename).stem.upper()
+              special_cases = {'REFERENCE': 'API-Reference'}
+              if name in special_cases:
+                  return special_cases[name]
+              # Convert underscores to hyphens and to Title Case
+              name = name.replace('_', '-')
+              parts = name.split('-')
+              return '-'.join(p.capitalize() for p in parts)
+          
+          def fix_markdown_links(content, doc_mapping):
+              """Fix all markdown links in content."""
+              # Pattern: [text](target.md) or [text](target.md#anchor) or [text](docs/target.md)
+              pattern = re.compile(
+                  r'\[([^\]]+)\]\(([^)]+\.md)(#[^)]+)?\)',
+                  re.IGNORECASE
+              )
+              
+              def replace_link(match):
+                  link_text = match.group(1)
+                  target = match.group(2)
+                  anchor = match.group(3) or ''
+                  
+                  # Extract filename from path
+                  filename = Path(target).name.upper()
+                  
+                  # Get wiki name from mapping or convert generically
+                  wiki_name = doc_mapping.get(filename, filename_to_wiki_name(filename))
+                  
+                  return f'[{link_text}]({wiki_name}{anchor})'
+              
+              return pattern.sub(replace_link, content)
+          
+          # Build mapping of all docs
+          docs_dir = Path('docs')
+          doc_mapping = {}
+          for md_file in docs_dir.glob('*.md'):
+              filename = md_file.name.upper()
+              wiki_name = filename_to_wiki_name(md_file.name)
+              doc_mapping[filename] = wiki_name
+          
+          # Fix links in all wiki files
+          wiki_dir = Path('../wiki-repo')
+          for wiki_file in wiki_dir.glob('*.md'):
+              content = wiki_file.read_text(encoding='utf-8')
+              fixed_content = fix_markdown_links(content, doc_mapping)
+              wiki_file.write_text(fixed_content, encoding='utf-8')
+              print(f"Fixed links in: {wiki_file.name}")
+          PYTHON_SCRIPT
+          
+          # Create Home page dynamically with links to all documentation
+          python3 << 'PYTHON_SCRIPT'
+          from pathlib import Path
+          
+          wiki_dir = Path('../wiki-repo')
+          
+          # Get all wiki pages (excluding Home.md)
+          wiki_pages = sorted([f.stem for f in wiki_dir.glob('*.md') if f.name != 'Home.md'])
+          
+          # Create Home page content
+          home_content = """# python-package-folder Documentation
+          
+Welcome to the python-package-folder documentation wiki!
+
+## Quick Links
+
+"""
+          
+          # Add links to all documentation pages
+          for page in wiki_pages:
+              # Convert page name to a more readable format for the link text
+              # e.g., "Version-Resolution" -> "Version Resolution"
+              link_text = page.replace('-', ' ')
+              home_content += f"- [{link_text}]({page})\n"
+          
+          home_content += """
+## Overview
+
+Easily build and publish any target folder in a repository, including subfolders of a monorepo.  
+Together with [sysappend](https://pypi.org/project/sysappend/), this library makes relative imports, flexible import management, and package publishing a breeze.
+
+## Features
+
+- **Subfolder Build Support**: Build subfolders as separate packages with automatic detection and configuration
+- **Smart Import Classification**: Recursively parses all `.py` files to detect and classify imports
+- **Automatic Version Resolution**: Resolve versions via conventional commits (Python-native, no Node.js required)
+- **Package Publishing**: Publish to PyPI, TestPyPI, or Azure Artifacts
+
+## Quick Start
+
+```bash
+# Build and publish a subfolder
+cd src/my_subfolder
+python-package-folder --publish pypi
+```
+
+For more information, see the [Usage Guide](Usage).
+"""
+          
+          # Write Home.md
+          (wiki_dir / 'Home.md').write_text(home_content, encoding='utf-8')
+          print("Created Home.md with links to all documentation pages")
+          PYTHON_SCRIPT
+
+      - name: Commit and push to wiki
+        run: |
+          cd wiki-repo
+          
+          # Set up token for authentication
+          WIKI_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/alelom/python-package-folder.wiki.git"
+          
+          # Initialize git repo if it doesn't exist (empty wiki or first run)
+          if [ ! -d .git ]; then
+            echo "Initializing new wiki repository"
+            git init
+            git remote add origin "$WIKI_URL" || true
+            git checkout -b master
+          else
+            # Configure remote if missing or update to use token
+            if ! git remote get-url origin >/dev/null 2>&1; then
+              git remote add origin "$WIKI_URL"
+            else
+              # Update remote URL to include token
+              git remote set-url origin "$WIKI_URL"
+            fi
+            
+            # Fetch and checkout appropriate branch
+            git fetch origin master 2>/dev/null || git fetch origin main 2>/dev/null || true
+            if git show-ref --verify --quiet refs/heads/master; then
+              git checkout master
+            elif git show-ref --verify --quiet refs/remotes/origin/master; then
+              git checkout -b master origin/master
+            else
+              git checkout -b master
+            fi
+          fi
+          
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Stage all changes
+          git add -A
+          
+          # Check if there are changes to commit
+          if git diff --cached --quiet && [ -n "$(git ls-files)" ]; then
+            echo "No changes to commit"
+          else
+            # Commit changes (or create initial commit)
+            git commit -m "Update documentation from main repository [skip ci]" || echo "No changes to commit"
+            
+            # Push to wiki using token
+            git push origin master || \
+            git push origin HEAD:master || \
+            echo "Push failed - wiki may need to be enabled in repository settings"
+          fi
