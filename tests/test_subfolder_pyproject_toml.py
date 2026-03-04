@@ -1,4 +1,22 @@
-"""Tests for subfolder build functionality."""
+"""
+Tests for pyproject.toml handling in subfolder builds.
+
+This module contains comprehensive tests for how pyproject.toml files are handled
+during subfolder builds, including merging strategies, version/name/dependency
+handling, and field preservation.
+
+Key areas tested:
+- Subfolder builds with existing pyproject.toml files
+- Subfolder builds without parent pyproject.toml
+- Temporary pyproject.toml creation and configuration
+- Version field handling and overriding
+- Package name field handling and warnings
+- Dependencies field handling and automatic detection
+- Parent pyproject.toml field merging
+- End-to-end workflows combining multiple features
+
+File: tests/test_subfolder_pyproject_toml.py
+"""
 
 from __future__ import annotations
 

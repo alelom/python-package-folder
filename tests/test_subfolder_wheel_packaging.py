@@ -1,4 +1,18 @@
-"""Tests for subfolder build functionality."""
+"""
+Tests for wheel packaging verification in subfolder builds.
+
+This module contains tests to verify that wheels built from subfolder packages
+have the correct structure and contain all necessary files. This is critical
+to ensure that installed packages work correctly.
+
+Key areas tested:
+- Wheel file structure and contents verification
+- Package directory naming in wheels (must match Python import name)
+- Verification that package files are included (not just .dist-info)
+- Wheel inspection and validation
+
+File: tests/test_subfolder_wheel_packaging.py
+"""
 
 from __future__ import annotations
 

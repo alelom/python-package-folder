@@ -1,4 +1,20 @@
-"""Tests for subfolder build functionality."""
+"""
+Tests for import handling and conversion in subfolder builds.
+
+This module contains tests for how imports are resolved, classified, and converted
+during subfolder builds. This includes handling imports from src/ root files,
+relative import depth calculation, and ensuring third-party imports are not
+incorrectly converted.
+
+Key areas tested:
+- Importing files from src/ root (e.g., _globals.py, _config.py)
+- Finding and copying src/ root files as external dependencies
+- Relative import depth calculation for nested directories
+- Third-party import classification and conversion prevention
+- Import conversion behavior based on classification
+
+File: tests/test_subfolder_imports.py
+"""
 
 from __future__ import annotations
 

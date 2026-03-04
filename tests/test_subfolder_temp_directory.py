@@ -1,4 +1,19 @@
-"""Tests for subfolder build functionality."""
+"""
+Tests for temporary package directory creation and management.
+
+This module contains tests for the temporary package directory functionality used
+during subfolder builds. The temporary directory is created with the correct Python
+import name and contains all necessary files for building the package.
+
+Key areas tested:
+- Temporary directory creation with correct naming (matching Python import name)
+- File and directory copying from source to temporary directory
+- Exclusion pattern handling during copy operations
+- Cleanup and restoration of original state
+- __init__.py file handling in temporary directories
+
+File: tests/test_subfolder_temp_directory.py
+"""
 
 from __future__ import annotations
 

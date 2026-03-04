@@ -1,4 +1,18 @@
-"""Tests for subfolder build functionality."""
+"""
+Tests for SubfolderBuildConfig class functionality.
+
+This module contains tests for the SubfolderBuildConfig class, which manages
+the creation and configuration of temporary build environments for subfolder packages.
+
+Key areas tested:
+- SubfolderBuildConfig initialization and configuration
+- Temporary pyproject.toml creation and modification
+- Package name derivation and customization
+- Dependency group handling
+- __init__.py file management
+
+File: tests/test_subfolder_build_config.py
+"""
 
 from __future__ import annotations
 
