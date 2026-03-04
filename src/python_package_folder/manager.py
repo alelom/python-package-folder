@@ -933,6 +933,9 @@ class BuildManager:
         ambiguous: list[ImportInfo] = []
 
         for file_path in python_files:
+            # Skip files that don't exist (might be in temp directory that wasn't fully created)
+            if not file_path.exists():
+                continue
             imports = analyzer.extract_imports(file_path)
             for imp in imports:
                 analyzer.classify_import(imp, self.src_dir)

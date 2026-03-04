@@ -280,9 +280,19 @@ class SubfolderBuildConfig:
                 in_sdist_section = False
                 result.append(line)
             elif in_sdist_section:
-                # Track if only-include already exists
+                # Replace only-include path if it exists
                 if re.match(r"^\s*only-include\s*=", line):
                     only_include_set = True
+                    # Replace with correct path
+                    only_include_paths = [correct_packages_path]
+                    only_include_paths.append("pyproject.toml")
+                    only_include_paths.append("README.md")
+                    only_include_paths.append("README.rst")
+                    only_include_paths.append("README.txt")
+                    only_include_paths.append("README")
+                    only_include_str = ", ".join(f'"{p}"' for p in only_include_paths)
+                    result.append(f"only-include = [{only_include_str}]")
+                    continue
                 result.append(line)
             elif in_hatch_build_section:
                 result.append(line)
@@ -327,19 +337,27 @@ class SubfolderBuildConfig:
 
         # Use only-include for source distributions to ensure only the subfolder is included
         # This prevents including files from the project root
-        if correct_packages_path and not only_include_set:
-            result.append("")
-            result.append("[tool.hatch.build.targets.sdist]")
-            # Include only the subfolder directory and necessary files
-            only_include_paths = [correct_packages_path]
-            # Also include pyproject.toml and README if they exist
-            only_include_paths.append("pyproject.toml")
-            only_include_paths.append("README.md")
-            only_include_paths.append("README.rst")
-            only_include_paths.append("README.txt")
-            only_include_paths.append("README")
-            only_include_str = ", ".join(f'"{p}"' for p in only_include_paths)
-            result.append(f"only-include = [{only_include_str}]")
+        # Only add sdist section if it doesn't already exist and only-include wasn't set
+        if correct_packages_path:
+            # Check if sdist section already exists in result
+            sdist_section_exists = any(
+                line.strip().startswith("[tool.hatch.build.targets.sdist]")
+                for line in result
+            )
+            # Only add section and only-include if they don't already exist
+            if not sdist_section_exists and not only_include_set:
+                result.append("")
+                result.append("[tool.hatch.build.targets.sdist]")
+                # Include only the subfolder directory and necessary files
+                only_include_paths = [correct_packages_path]
+                # Also include pyproject.toml and README if they exist
+                only_include_paths.append("pyproject.toml")
+                only_include_paths.append("README.md")
+                only_include_paths.append("README.rst")
+                only_include_paths.append("README.txt")
+                only_include_paths.append("README")
+                only_include_str = ", ".join(f'"{p}"' for p in only_include_paths)
+                result.append(f"only-include = [{only_include_str}]")
 
         return "\n".join(result)
 
@@ -407,6 +425,14 @@ class SubfolderBuildConfig:
                 # This will copy the __init__.py we just created (if any)
                 self._create_temp_package_directory()
                 
+                # Verify temporary package directory was created
+                if not self._temp_package_dir or not self._temp_package_dir.exists():
+                    print(
+                        f"Warning: Temporary package directory was not created. "
+                        f"Falling back to using src_dir: {self.src_dir}",
+                        file=sys.stderr,
+                    )
+                
                 # Determine which directory to use (temp package dir or src_dir)
                 package_dir = self._temp_package_dir if self._temp_package_dir and self._temp_package_dir.exists() else self.src_dir
                 # Use the subfolder's pyproject.toml
@@ -421,6 +447,8 @@ class SubfolderBuildConfig:
                 temp_pyproject_path = self.project_root / "pyproject.toml.temp"
 
                 # Adjust packages path to be relative to project root
+                # This must be called AFTER _create_temp_package_directory() so _get_package_structure() 
+                # can find the temporary directory
                 adjusted_content = self._adjust_subfolder_pyproject_packages_path(subfolder_content)
                 
                 # Read exclude patterns from root pyproject.toml and inject them (if it exists)
