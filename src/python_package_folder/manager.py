@@ -605,6 +605,51 @@ class BuildManager:
         Returns:
             List of unique third-party package names (e.g., ["pypdf", "requests", "pymupdf"])
         """
+        # Common third-party packages that are often misclassified as ambiguous
+        COMMON_THIRD_PARTY_PACKAGES = {
+            "torch",
+            "torchvision",
+            "numpy",
+            "pandas",
+            "matplotlib",
+            "scipy",
+            "sklearn",
+            "tensorflow",
+            "keras",
+            "pillow",
+            "PIL",
+            "cv2",
+            "opencv",
+            "requests",
+            "flask",
+            "django",
+            "pytest",
+            "pydantic",
+            "fastapi",
+            "sqlalchemy",
+            "pymongo",
+            "redis",
+            "celery",
+            "boto3",
+            "azure",
+            "google",
+            "openai",
+            "langchain",
+            "fiftyone",
+            "pycocotools",
+            "albumentations",
+            "loguru",
+            "tqdm",
+            "rich",
+            "pypdf",
+            "pymupdf",
+            "networkx",
+            "openpyxl",
+            "nltk",
+            "spacy",
+            "textdistance",
+            "IPython",
+        }
         third_party_packages: set[str] = set()
         # Cache package name lookups to avoid repeated expensive searches
         package_name_cache: dict[str, str | None] = {}
@@ -648,23 +693,34 @@ class BuildManager:
                         # Fallback to using the import name
                         third_party_packages.add(root_module)
                 # If it's ambiguous or unresolved, and not stdlib/local/external,
-                # only add as dependency if we can verify it's actually an installed package
+                # check if it's a common third-party package or can be verified
                 elif imp.classification == "ambiguous" or imp.classification is None:
                     # Check if it's not a local or external module
                     if not imp.resolved_path:
-                        # Try to verify it's actually an installed package before adding
-                        # Check cache first
-                        if root_module not in package_name_cache:
-                            package_name_cache[root_module] = self._get_package_name_from_import(
-                                imp.module_name
-                            )
-                        actual_package = package_name_cache[root_module]
-                        # Only add if we can verify it's an actual installed package
-                        # Don't add ambiguous imports that we can't verify
-                        if actual_package:
-                            third_party_packages.add(actual_package)
-                        # If we can't verify it's a package, don't add it
-                        # (it's likely a local file that wasn't resolved properly)
+                        # Check if it's a common third-party package
+                        if root_module in COMMON_THIRD_PARTY_PACKAGES:
+                            # Try to get package name, or use module name as fallback
+                            if root_module not in package_name_cache:
+                                package_name_cache[root_module] = self._get_package_name_from_import(
+                                    imp.module_name
+                                )
+                            actual_package = package_name_cache[root_module]
+                            if actual_package:
+                                third_party_packages.add(actual_package)
+                            else:
+                                # Fallback: use module name (common packages like torch, numpy)
+                                third_party_packages.add(root_module)
+                        else:
+                            # For other ambiguous imports, only add if verified
+                            if root_module not in package_name_cache:
+                                package_name_cache[root_module] = self._get_package_name_from_import(
+                                    imp.module_name
+                                )
+                            actual_package = package_name_cache[root_module]
+                            if actual_package:
+                                third_party_packages.add(actual_package)
+                            # If we can't verify it's a package, don't add it
+                            # (it's likely a local file that wasn't resolved properly)
 
         if total_files > 50:
             print()  # New line after progress indicator
@@ -765,6 +821,44 @@ class BuildManager:
                     file=sys.stderr,
                 )
 
+    def _calculate_relative_import_depth(
+        self, file_path: Path, module_path: Path, src_dir: Path
+    ) -> str:
+        """
+        Calculate the relative import prefix (., .., ...) based on directory depth.
+
+        Args:
+            file_path: Path to the file containing the import
+            module_path: Path to the imported module (file or directory)
+            src_dir: Source directory (package root)
+
+        Returns:
+            String with appropriate number of dots (e.g., ".", "..", "...")
+        """
+        try:
+            # Get relative paths from src_dir
+            file_rel = file_path.parent.relative_to(src_dir)
+            module_rel = module_path.parent.relative_to(src_dir)
+
+            # Calculate depth difference
+            # If paths are ".", depth is 0
+            file_depth = len(file_rel.parts) if file_rel.parts != (".",) else 0
+            module_depth = len(module_rel.parts) if module_rel.parts != (".",) else 0
+
+            depth_diff = file_depth - module_depth
+
+            if depth_diff == 0:
+                return "."  # Same level
+            elif depth_diff > 0:
+                # File is deeper than module, need to go up
+                return "." * (depth_diff + 1)  # Go up depth_diff levels
+            else:
+                # Module is deeper than file, use single dot
+                return "."
+        except ValueError:
+            # If paths are not relative to src_dir, fall back to single dot
+            return "."
+
     def _convert_imports_to_relative(
         self, python_files: list[Path], external_deps: list[ExternalDependency]
     ) -> None:
@@ -844,7 +938,24 @@ class BuildManager:
                         if node.module is None:
                             continue
 
-                        # Classify the import to determine if it should be converted
+                        # Extract root module (first part before the first dot)
+                        root_module = node.module.split(".")[0]
+
+                        # Classify the root module first to check if it's third-party/ambiguous/stdlib
+                        # If root is third-party/ambiguous/stdlib, skip ALL its submodules
+                        root_import_info = ImportInfo(
+                            module_name=root_module,
+                            import_type="from",
+                            line_number=node.lineno,
+                            file_path=file_path,
+                        )
+                        analyzer.classify_import(root_import_info, self.src_dir)
+
+                        # If root is third-party/ambiguous/stdlib, skip ALL submodules
+                        if root_import_info.classification in ("third_party", "ambiguous", "stdlib"):
+                            continue
+
+                        # Now classify the full import to determine if it should be converted
                         import_info = ImportInfo(
                             module_name=node.module,
                             import_type="from",
@@ -860,7 +971,6 @@ class BuildManager:
 
                         # Check if this import matches a copied dependency or a local file
                         # (additional safety check, but classification takes precedence)
-                        root_module = node.module.split(".")[0]
                         is_copied_dependency = (
                             root_module in copied_import_names or node.module in copied_import_names
                         )
@@ -880,11 +990,36 @@ class BuildManager:
                         if original_line.strip().startswith("from ."):
                             continue
 
+                        # Find the target path for the imported module
+                        module_target_path = None
+                        for dep in external_deps:
+                            if dep.import_name == node.module or node.module.startswith(dep.import_name + "."):
+                                module_target_path = dep.target_path
+                                break
+
+                        # If not found in external deps, check if it's a local file
+                        if module_target_path is None:
+                            # Try to find it as a local file
+                            module_parts = node.module.split(".")
+                            potential_path = self.src_dir / "/".join(module_parts)
+                            if (potential_path / "__init__.py").exists():
+                                module_target_path = potential_path / "__init__.py"
+                            elif potential_path.with_suffix(".py").exists():
+                                module_target_path = potential_path.with_suffix(".py")
+                            else:
+                                # Fallback: assume same level
+                                module_target_path = file_path.parent
+
+                        # Calculate the correct relative import depth
+                        dots = self._calculate_relative_import_depth(
+                            file_path, module_target_path, self.src_dir
+                        )
+
                         # Convert absolute import to relative import
-                        # from _shared.image_utils import ... -> from ._shared.image_utils import ...
+                        # from _shared.image_utils import ... -> from .._shared.image_utils import ...
                         new_line = re.sub(
                             rf"^(\s*)from\s+{re.escape(node.module)}\s+import",
-                            rf"\1from .{node.module} import",
+                            rf"\1from {dots}{node.module} import",
                             original_line,
                         )
 
@@ -895,7 +1030,24 @@ class BuildManager:
                     elif isinstance(node, ast.Import):
                         # Handle "import X" statements
                         for alias in node.names:
-                            # Classify the import to determine if it should be converted
+                            # Extract root module (first part before the first dot)
+                            root_module = alias.name.split(".")[0]
+
+                            # Classify the root module first to check if it's third-party/ambiguous/stdlib
+                            # If root is third-party/ambiguous/stdlib, skip ALL its submodules
+                            root_import_info = ImportInfo(
+                                module_name=root_module,
+                                import_type="import",
+                                line_number=node.lineno,
+                                file_path=file_path,
+                            )
+                            analyzer.classify_import(root_import_info, self.src_dir)
+
+                            # If root is third-party/ambiguous/stdlib, skip ALL submodules
+                            if root_import_info.classification in ("third_party", "ambiguous", "stdlib"):
+                                continue
+
+                            # Now classify the full import to determine if it should be converted
                             import_info = ImportInfo(
                                 module_name=alias.name,
                                 import_type="import",
@@ -911,7 +1063,6 @@ class BuildManager:
 
                             # Check if this import matches a copied dependency or a local file
                             # (additional safety check, but classification takes precedence)
-                            root_module = alias.name.split(".")[0]
                             is_copied_dependency = root_module in copied_import_names
                             is_local_file = root_module in local_file_names
 
@@ -928,11 +1079,36 @@ class BuildManager:
                             if original_line.strip().startswith("import ."):
                                 continue
 
-                            # Convert "import _shared" to "from . import _shared"
+                            # Find the target path for the imported module
+                            module_target_path = None
+                            for dep in external_deps:
+                                if dep.import_name == alias.name or alias.name.startswith(dep.import_name + "."):
+                                    module_target_path = dep.target_path
+                                    break
+
+                            # If not found in external deps, check if it's a local file
+                            if module_target_path is None:
+                                # Try to find it as a local file
+                                module_parts = alias.name.split(".")
+                                potential_path = self.src_dir / "/".join(module_parts)
+                                if (potential_path / "__init__.py").exists():
+                                    module_target_path = potential_path / "__init__.py"
+                                elif potential_path.with_suffix(".py").exists():
+                                    module_target_path = potential_path.with_suffix(".py")
+                                else:
+                                    # Fallback: assume same level
+                                    module_target_path = file_path.parent
+
+                            # Calculate the correct relative import depth
+                            dots = self._calculate_relative_import_depth(
+                                file_path, module_target_path, self.src_dir
+                            )
+
+                            # Convert "import _shared" to "from .. import _shared" (with correct depth)
                             # This is more complex, so we'll use a regex replacement
                             new_line = re.sub(
                                 rf"^(\s*)import\s+{re.escape(alias.name)}\b",
-                                rf"\1from . import {alias.name}",
+                                rf"\1from {dots} import {alias.name}",
                                 original_line,
                             )
 

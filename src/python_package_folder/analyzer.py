@@ -396,7 +396,9 @@ class ImportAnalyzer:
         Check if a module is a third-party package.
 
         Uses importlib to find the module and checks if its location
-        is in site-packages or dist-packages.
+        is in site-packages or dist-packages. Also tries to import the module
+        to check if it's available, which helps catch cases where packages
+        are installed but metadata lookup fails.
 
         Args:
             module_name: Name of the module to check
@@ -405,12 +407,69 @@ class ImportAnalyzer:
             True if the module is a third-party package, False otherwise
         """
         root_module = module_name.split(".")[0]
+
+        # Skip if already known as stdlib
+        stdlib_modules = self.get_stdlib_modules()
+        if root_module in stdlib_modules:
+            return False
+
         try:
             spec = importlib.util.find_spec(root_module)
             if spec and spec.origin:
                 origin_path = Path(spec.origin)
-                # Check if it's in site-packages
-                return "site-packages" in str(origin_path) or "dist-packages" in str(origin_path)
-        except (ImportError, ValueError, AttributeError):
-            pass
+                origin_str = str(origin_path)
+
+                # Check if it's in site-packages or dist-packages
+                if "site-packages" in origin_str or "dist-packages" in origin_str:
+                    return True
+
+                # Check if it's outside the standard library directory
+                # Standard library is typically in the Python installation directory
+                # and not in site-packages
+                stdlib_paths = [
+                    "lib/python",
+                    "Lib\\python",  # Windows
+                    "lib64/python",
+                    "Lib64\\python",  # Windows
+                ]
+                is_stdlib_path = any(stdlib_path in origin_str for stdlib_path in stdlib_paths)
+                if not is_stdlib_path and "site-packages" not in origin_str:
+                    # If it's not in stdlib paths and not in site-packages,
+                    # and it's not in the project directory, it might be third-party
+                    # Check if it's outside the project directory
+                    try:
+                        origin_path.resolve().relative_to(self.project_root.resolve())
+                        # It's in the project, so it's not third-party
+                        return False
+                    except ValueError:
+                        # It's outside the project, might be third-party
+                        # Try to import it to verify
+                        try:
+                            __import__(root_module)
+                            # If import succeeds and it's outside project, likely third-party
+                            return True
+                        except ImportError:
+                            pass
+
+        except (ImportError, ValueError, AttributeError, Exception):
+            # If importlib fails, try direct import as fallback
+            try:
+                imported_module = __import__(root_module)
+                # Check if the module's __file__ points to site-packages
+                if hasattr(imported_module, "__file__") and imported_module.__file__:
+                    module_file = str(imported_module.__file__)
+                    if "site-packages" in module_file or "dist-packages" in module_file:
+                        return True
+                    # Check if it's outside the project
+                    try:
+                        Path(imported_module.__file__).resolve().relative_to(
+                            self.project_root.resolve()
+                        )
+                        return False  # It's in the project
+                    except ValueError:
+                        # It's outside the project, likely third-party
+                        return True
+            except ImportError:
+                pass
+
         return False
