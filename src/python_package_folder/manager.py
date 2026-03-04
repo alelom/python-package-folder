@@ -838,7 +838,13 @@ class BuildManager:
         try:
             # Get relative paths from src_dir
             file_dir = file_path.parent
-            module_dir = module_path.parent if module_path.is_file() else module_path
+            # If module_path has a file extension (.py), treat it as a file and use its parent
+            # Otherwise, treat it as a directory
+            # This handles cases where the file doesn't exist yet (is_file() would return False)
+            if module_path.suffix == ".py" or (module_path.is_file() if module_path.exists() else False):
+                module_dir = module_path.parent
+            else:
+                module_dir = module_path
             
             # Normalize both to be relative to src_dir
             try:

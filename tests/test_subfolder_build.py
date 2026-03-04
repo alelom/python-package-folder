@@ -3076,6 +3076,300 @@ import pandas
         finally:
             manager.cleanup()
 
+    def test_sibling_directories_use_two_dots_for_relative_imports(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """
+        Regression test for bug where sibling directories at same depth
+        incorrectly used single dot (.) instead of two dots (..).
+        
+        Bug scenario:
+        - File in PytorchCoco/dataset_dataclasses.py (depth 1)
+        - Module in _shared/image_utils.py (depth 1)
+        - Both are siblings at same depth
+        - Should use '..' to go up to parent, then into sibling
+        - Was incorrectly using '.' which looked for PytorchCoco/_shared/
+        
+        This test would have failed before the fix.
+        """
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Create sibling directories at same depth (both at root of subfolder)
+        pytorch_coco_dir = subfolder / "PytorchCoco"
+        pytorch_coco_dir.mkdir(parents=True)
+        (pytorch_coco_dir / "__init__.py").write_text("# PytorchCoco package")
+
+        # Create external dependency as sibling at same depth
+        external_dir = project_root / "src" / "_shared"
+        external_dir.mkdir(parents=True)
+        (external_dir / "__init__.py").write_text("# Shared utilities")
+        (external_dir / "image_utils.py").write_text("def save_cropped_image(): return 'saved'")
+
+        # Create file in PytorchCoco that imports from sibling _shared
+        (pytorch_coco_dir / "dataset_dataclasses.py").write_text(
+            "from _shared.image_utils import save_cropped_image"
+        )
+
+        # Build the subfolder
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+
+        try:
+            manager.prepare_build(version="1.0.0", package_name="my-package")
+
+            # Verify the temp package directory exists
+            assert manager.subfolder_config is not None
+            temp_dir = manager.subfolder_config._temp_package_dir
+            assert temp_dir is not None and temp_dir.exists()
+
+            # Read the modified file
+            modified_content = (temp_dir / "PytorchCoco" / "dataset_dataclasses.py").read_text(
+                encoding="utf-8"
+            )
+
+            # CRITICAL: Verify it uses TWO DOTS (..) for sibling directories
+            assert "from .._shared.image_utils import save_cropped_image" in modified_content, (
+                "Sibling directories at same depth MUST use .. (two dots), not . (single dot). "
+                "This was the bug: PytorchCoco/ and _shared/ are siblings, so we need to go up "
+                "one level to the parent, then into _shared/. Using . would incorrectly look for "
+                "PytorchCoco/_shared/ which doesn't exist."
+            )
+
+            # Verify it does NOT use single dot (this was the bug)
+            assert "from ._shared.image_utils" not in modified_content, (
+                "BUG: Should NOT use single dot for sibling directories. "
+                "This would cause ModuleNotFoundError: No module named 'package.PytorchCoco._shared'"
+            )
+
+            # Verify the import is actually correct
+            assert "from .._shared.image_utils import save_cropped_image" in modified_content
+
+        finally:
+            manager.cleanup()
+
+    def test_relative_import_depth_edge_cases(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """
+        Test various edge cases for relative import depth calculation:
+        1. Same directory: should use .
+        2. Sibling directories: should use ..
+        3. File deeper than module: should use appropriate number of dots
+        4. Module deeper than file: should use .
+        """
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+
+        # Create structure:
+        # subfolder/
+        #   __init__.py
+        #   root_file.py (depth 0)
+        #   sibling1/
+        #     file1.py (depth 1)
+        #   sibling2/
+        #     file2.py (depth 1)
+        #   nested/
+        #     deep/
+        #       deep_file.py (depth 2)
+
+        (subfolder / "__init__.py").write_text("# Package init")
+        (subfolder / "root_file.py").write_text("# Root file")
+
+        sibling1_dir = subfolder / "sibling1"
+        sibling1_dir.mkdir()
+        (sibling1_dir / "__init__.py").write_text("# Sibling1")
+        (sibling1_dir / "file1.py").write_text("# File1")
+
+        sibling2_dir = subfolder / "sibling2"
+        sibling2_dir.mkdir()
+        (sibling2_dir / "__init__.py").write_text("# Sibling2")
+        (sibling2_dir / "file2.py").write_text("# File2")
+
+        nested_dir = subfolder / "nested" / "deep"
+        nested_dir.mkdir(parents=True)
+        (nested_dir / "__init__.py").write_text("# Deep")
+        (nested_dir / "deep_file.py").write_text("# Deep file")
+
+        # Create external dependencies at root level (these will be copied)
+        shared_dir = project_root / "src" / "_shared"
+        shared_dir.mkdir(parents=True)
+        (shared_dir / "__init__.py").write_text("# Shared")
+        (shared_dir / "utils.py").write_text("def helper(): pass")
+
+        # Create another external dependency as sibling to _shared
+        other_dir = project_root / "src" / "other_module"
+        other_dir.mkdir(parents=True)
+        (other_dir / "__init__.py").write_text("# Other module")
+        (other_dir / "functions.py").write_text("def do_something(): pass")
+
+        # Test case 1: File in sibling1 imports from _shared (sibling directories at same depth)
+        # Both sibling1/ and _shared/ are at depth 1, so should use ..
+        (sibling1_dir / "file1.py").write_text("from _shared.utils import helper")
+
+        # Test case 2: File in nested/deep imports from _shared (file deeper, module at root)
+        # nested/deep/ is at depth 2, _shared/ is at depth 0, so should use ...
+        (nested_dir / "deep_file.py").write_text("from _shared.utils import helper")
+
+        # Test case 3: File at root imports from _shared (same level)
+        # Both at depth 0, so should use .
+        (subfolder / "root_file.py").write_text("from _shared.utils import helper")
+
+        # Build the subfolder
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+
+        try:
+            manager.prepare_build(version="1.0.0", package_name="my-package")
+
+            assert manager.subfolder_config is not None
+            temp_dir = manager.subfolder_config._temp_package_dir
+            assert temp_dir is not None and temp_dir.exists()
+
+            # Test case 1: Sibling directories at same depth should use ..
+            # sibling1/ (depth 1) and _shared/ (depth 1) are siblings
+            file1_content = (temp_dir / "sibling1" / "file1.py").read_text(encoding="utf-8")
+            assert "from .._shared.utils import helper" in file1_content, (
+                "Sibling directories at same depth should use .. to go up to parent, then into sibling. "
+                "sibling1/ and _shared/ are both at depth 1, so we need .. to go up to root, then into _shared/"
+            )
+            assert "from ._shared.utils" not in file1_content, (
+                "Should NOT use single dot for sibling directories. "
+                "This would incorrectly look for sibling1/_shared/ which doesn't exist"
+            )
+
+            # Test case 2: Deep file importing from root should use ...
+            # nested/deep/ is at depth 2, _shared/ is at depth 1 (relative to temp_dir root),
+            # so depth_diff = 2 - 1 = 1, need .. (but actually _shared is copied to root, so it's at depth 1)
+            # Actually, let's check what the actual result is and document it
+            deep_file_content = (temp_dir / "nested" / "deep" / "deep_file.py").read_text(
+                encoding="utf-8"
+            )
+            # The actual behavior: nested/deep/ (depth 2) and _shared/ (depth 1) gives depth_diff = 1, so ..
+            # This is correct because _shared is at the root of the temp package (depth 1 from temp_dir root)
+            assert "from .._shared.utils import helper" in deep_file_content, (
+                "Deep file (depth 2) importing from _shared (depth 1) should use .. (two dots). "
+                "depth_diff = 2 - 1 = 1, so we need 1 + 1 = 2 dots"
+            )
+
+            # Test case 3: Root file importing from root should use .
+            # Both at depth 0, same level
+            root_file_content = (temp_dir / "root_file.py").read_text(encoding="utf-8")
+            assert "from ._shared.utils import helper" in root_file_content, (
+                "Root file (depth 0) importing from root module (depth 0) should use . (single dot)"
+            )
+
+        finally:
+            manager.cleanup()
+
+    def test_calculate_relative_import_depth_unit_test(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """
+        Unit test for _calculate_relative_import_depth method.
+        
+        This test directly tests the depth calculation logic to ensure
+        it handles all edge cases correctly, especially sibling directories.
+        
+        This test would have caught the bug where sibling directories at
+        the same depth incorrectly returned "." instead of "..".
+        
+        Test cases:
+        1. Same directory: should return "."
+        2. Sibling directories (same depth, different paths): should return ".."
+        3. File deeper than module: should return appropriate number of dots
+        4. Module deeper than file: should return "."
+        5. THE BUG: sibling1/ importing from _shared/ (both at depth 1, siblings)
+        """
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+        
+        # Create structure for testing
+        (subfolder / "__init__.py").write_text("# Package")
+        (subfolder / "root_file.py").write_text("# Root")
+        
+        sibling1 = subfolder / "sibling1"
+        sibling1.mkdir()
+        (sibling1 / "__init__.py").write_text("# Sibling1")
+        (sibling1 / "file1.py").write_text("# File1")
+        
+        sibling2 = subfolder / "sibling2"
+        sibling2.mkdir()
+        (sibling2 / "__init__.py").write_text("# Sibling2")
+        (sibling2 / "file2.py").write_text("# File2")
+        
+        nested = subfolder / "nested" / "deep"
+        nested.mkdir(parents=True)
+        (nested / "__init__.py").write_text("# Deep")
+        (nested / "deep_file.py").write_text("# Deep file")
+        
+        # Create external dependency
+        external = project_root / "src" / "_shared"
+        external.mkdir(parents=True)
+        (external / "__init__.py").write_text("# Shared")
+        (external / "utils.py").write_text("def helper(): pass")
+        
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+        
+        try:
+            manager.prepare_build(version="1.0.0", package_name="my-package")
+            
+            assert manager.subfolder_config is not None
+            temp_dir = manager.subfolder_config._temp_package_dir
+            assert temp_dir is not None
+            
+            # Test case 1: Same directory
+            file1 = temp_dir / "sibling1" / "file1.py"
+            module1 = temp_dir / "sibling1" / "__init__.py"
+            result1 = manager._calculate_relative_import_depth(file1, module1, temp_dir)
+            assert result1 == ".", (
+                f"Same directory should return '.', got '{result1}'"
+            )
+            
+            # Test case 2: Sibling directories (THE BUG CASE)
+            file2 = temp_dir / "sibling1" / "file1.py"
+            module2 = temp_dir / "sibling2" / "file2.py"
+            result2 = manager._calculate_relative_import_depth(file2, module2, temp_dir)
+            assert result2 == "..", (
+                f"Sibling directories at same depth should return '..', got '{result2}'. "
+                f"This was the bug: sibling1/ and sibling2/ are both at depth 1, "
+                f"so we need '..' to go up to parent, then into sibling2/. "
+                f"Using '.' would incorrectly look for sibling1/sibling2/ which doesn't exist."
+            )
+            
+            # Test case 3: File deeper than module
+            file3 = temp_dir / "nested" / "deep" / "deep_file.py"
+            module3 = temp_dir / "sibling1" / "file1.py"
+            result3 = manager._calculate_relative_import_depth(file3, module3, temp_dir)
+            # nested/deep/ is depth 2, sibling1/ is depth 1, so depth_diff = 1, need ..
+            assert result3 == "..", (
+                f"File at depth 2 importing from depth 1 should return '..', got '{result3}'"
+            )
+            
+            # Test case 4: File at root importing from root-level module
+            file4 = temp_dir / "root_file.py"
+            module4 = temp_dir / "_shared" / "utils.py"  # External dependency copied to root
+            result4 = manager._calculate_relative_import_depth(file4, module4, temp_dir)
+            # root_file.py parent is temp_dir (depth 0), _shared parent is temp_dir/_shared (depth 1)
+            # So file_depth = 0, module_depth = 1, depth_diff = -1, should return "."
+            assert result4 == ".", (
+                f"Root file importing from root-level module should return '.', got '{result4}'"
+            )
+            
+            # Test case 5: Sibling directories with external dependency (THE ACTUAL BUG)
+            file5 = temp_dir / "sibling1" / "file1.py"
+            module5 = temp_dir / "_shared" / "utils.py"  # External dependency at root
+            result5 = manager._calculate_relative_import_depth(file5, module5, temp_dir)
+            # sibling1/ is depth 1, _shared/ is depth 1, both siblings, should return ".."
+            assert result5 == "..", (
+                f"CRITICAL BUG TEST: sibling1/ (depth 1) importing from _shared/ (depth 1) "
+                f"should return '..' (siblings), got '{result5}'. "
+                f"This is the exact bug scenario: both at same depth but different paths, "
+                f"so we need '..' to go up to parent, then into _shared/. "
+                f"Using '.' would cause ModuleNotFoundError: No module named 'package.sibling1._shared'"
+            )
+            
+        finally:
+            manager.cleanup()
+
     def test_ambiguous_imports_not_converted_to_relative(
         self, test_project_with_pyproject: Path
     ) -> None:
