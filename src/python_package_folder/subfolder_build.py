@@ -344,20 +344,22 @@ class SubfolderBuildConfig:
         if not self.version:
             raise ValueError("Version is required for subfolder builds")
 
-        # Create temporary package directory with correct import name
-        self._create_temp_package_directory()
-        
-        # Determine which directory to use (temp package dir or src_dir)
-        package_dir = self._temp_package_dir if self._temp_package_dir and self._temp_package_dir.exists() else self.src_dir
-        
-        # Ensure package_dir is a package (has __init__.py) for hatchling
-        init_file = package_dir / "__init__.py"
+        # Ensure src_dir is a package (has __init__.py) before creating temp directory
+        # This way the __init__.py will be copied to the temp directory
+        init_file = self.src_dir / "__init__.py"
         if not init_file.exists():
             # Create a temporary __init__.py to make it a package
             init_file.write_text("# Temporary __init__.py for build\n", encoding="utf-8")
             self._temp_init_created = True
         else:
             self._temp_init_created = False
+
+        # Create temporary package directory with correct import name
+        # This will copy the __init__.py we just created (if any)
+        self._create_temp_package_directory()
+        
+        # Determine which directory to use (temp package dir or src_dir)
+        package_dir = self._temp_package_dir if self._temp_package_dir and self._temp_package_dir.exists() else self.src_dir
 
         # Check if pyproject.toml exists in subfolder
         subfolder_pyproject = self.src_dir / "pyproject.toml"

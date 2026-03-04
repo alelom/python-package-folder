@@ -440,11 +440,15 @@ def shared_function():
 
             # Verify dependencies were copied
             assert len(external_deps) >= 2
-            assert (subfolder / "_shared").exists()
-            assert (subfolder / "_globals.py").exists()
+            # Dependencies are copied to the temp package directory (if it exists) or original subfolder
+            package_dir = manager.src_dir  # This will be temp package dir if it was created
+            assert (package_dir / "_shared").exists()
+            assert (package_dir / "_globals.py").exists()
 
             # Verify imports were converted to relative
-            modified_content = test_file.read_text()
+            # Read from package_dir which may be temp package directory
+            test_file_in_package = package_dir / test_file.name
+            modified_content = test_file_in_package.read_text()
             assert "from ._shared.image_utils import save_PIL_image" in modified_content
             assert "from ._shared.file_utils import get_filepaths_config" in modified_content
             assert "from ._globals import is_testing" in modified_content
@@ -455,12 +459,15 @@ def shared_function():
             assert "from pathlib import Path" in modified_content
 
             # Verify import statement conversion
-            modified_content2 = test_file2.read_text()
+            test_file2_in_package = package_dir / test_file2.name
+            modified_content2 = test_file2_in_package.read_text()
             assert "from . import _globals" in modified_content2
 
             # Verify relative imports in copied files were fixed
-            if (subfolder / "_shared" / "shared_utils.py").exists():
-                shared_utils_content = (subfolder / "_shared" / "shared_utils.py").read_text()
+            # Check in the package directory (which may be temp package dir)
+            shared_utils_path = package_dir / "_shared" / "shared_utils.py"
+            if shared_utils_path.exists():
+                shared_utils_content = shared_utils_path.read_text()
                 # The relative import should be converted to absolute
                 assert (
                     "from .file_utils import" not in shared_utils_content
@@ -470,6 +477,7 @@ def shared_function():
             # Cleanup should restore original imports
             manager.cleanup()
 
+            # After cleanup, check original files (not temp package dir)
             restored_content = test_file.read_text()
             assert restored_content == original_content
 

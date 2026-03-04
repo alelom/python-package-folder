@@ -683,8 +683,8 @@ class TestSubfolderBuildTemporaryPyprojectCreation:
         assert "[tool.hatch.version]" not in content
         assert "[tool.uv-dynamic-versioning]" not in content
 
-        # Verify packages path is set correctly
-        assert 'packages = ["subfolder"]' in content or '"subfolder"' in content
+        # Verify packages path is set correctly (should use temp package directory)
+        assert '.temp_package_my_custom_package' in content
 
         # Verify backup was created
         assert (project_root / "pyproject.toml.original").exists()
@@ -734,8 +734,8 @@ class TestSubfolderBuildTemporaryPyprojectCreation:
         # Verify only-include is present
         assert "only-include = [" in content
 
-        # Verify the subfolder is included
-        assert '"subfolder"' in content
+        # Verify the temp package directory is included (not the original subfolder)
+        assert '.temp_package_test_package' in content
 
         # Verify necessary files are included
         assert '"pyproject.toml"' in content

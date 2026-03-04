@@ -139,7 +139,9 @@ packages = ["src/test_package"]
 
         # Verify spreadsheet_creation directory was copied with full structure preserved
         # Import is "data.spreadsheet_creation.spreadsheet_formatting_dataclasses", so structure should be preserved
-        copied_dir = src_dir / "data" / "spreadsheet_creation"
+        # Use manager.src_dir which may point to temp package directory
+        package_dir = manager.src_dir
+        copied_dir = package_dir / "data" / "spreadsheet_creation"
         assert copied_dir.exists(), (
             f"spreadsheet_creation directory should be copied with structure at {copied_dir}"
         )

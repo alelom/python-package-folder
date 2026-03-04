@@ -161,14 +161,16 @@ packages = ["src/test_package"]
         assert len(data_deps) > 0, "data dependencies should be found"
 
         # Verify models structure was copied with full path
-        models_path = src_dir / "models" / "Information_extraction" / "_shared_ie" / "ie_enums.py"
+        # Use manager.src_dir which may point to temp package directory
+        package_dir = manager.src_dir
+        models_path = package_dir / "models" / "Information_extraction" / "_shared_ie" / "ie_enums.py"
         assert models_path.exists(), (
             "models/Information_extraction/_shared_ie/ie_enums.py should be copied with full structure"
         )
 
         # Verify data structure was copied with full path
         data_path = (
-            src_dir / "data" / "spreadsheet_creation" / "spreadsheet_formatting_dataclasses.py"
+            package_dir / "data" / "spreadsheet_creation" / "spreadsheet_formatting_dataclasses.py"
         )
         assert data_path.exists(), (
             "data/spreadsheet_creation/spreadsheet_formatting_dataclasses.py should be copied with full structure"
