@@ -29,18 +29,26 @@ class ExternalDependencyFinder:
     """
 
     def __init__(
-        self, project_root: Path, src_dir: Path, exclude_patterns: list[str] | None = None
+        self,
+        project_root: Path,
+        src_dir: Path,
+        exclude_patterns: list[str] | None = None,
+        original_src_dir: Path | None = None,
     ) -> None:
         """
         Initialize the dependency finder.
 
         Args:
             project_root: Root directory of the project
-            src_dir: Source directory to analyze
+            src_dir: Source directory to analyze (may be temp directory for subfolder builds)
             exclude_patterns: Additional patterns to exclude (default: common sandbox patterns)
+            original_src_dir: Original source directory before any changes (e.g., before temp directory creation).
+                Used for relative path checks. If not provided, uses src_dir.
         """
         self.project_root = project_root.resolve()
         self.src_dir = src_dir.resolve()
+        # Store original src_dir for relative path checks (important for subfolder builds)
+        self.original_src_dir = (original_src_dir or src_dir).resolve()
         self.analyzer = ImportAnalyzer(project_root)
         # Patterns for directories/files to exclude (sandbox, skip, etc.)
         default_patterns = [
@@ -90,34 +98,43 @@ class ExternalDependencyFinder:
                     if source_path.is_file():
                         parent_dir = source_path.parent
 
-                        # Only copy parent directory if:
-                        # 1. It's a package (has __init__.py), OR
-                        # 2. Files from it are actually imported (which is the case here)
-                        # But only copy the immediate parent, not entire directory trees
-                        parent_is_package = (parent_dir / "__init__.py").exists()
-                        files_are_imported = True  # Always true when processing an import
-
-                        # Only copy immediate parent directory, not grandparent directories
-                        # This prevents copying entire trees like models/Information_extraction
-                        # when we only need models/Information_extraction/_shared_ie
-                        should_copy_dir = (
-                            not self._should_exclude_path(parent_dir)
-                            and (
-                                parent_is_package or files_are_imported
-                            )  # Package OR files imported
-                            and not parent_dir.is_relative_to(self.src_dir)
-                            and not self.src_dir.is_relative_to(parent_dir)
-                            and parent_dir != self.project_root
-                            and parent_dir != self.project_root.parent
-                        )
-
-                        if should_copy_dir:
-                            # Copy the directory instead of just the file
-                            track_path = parent_dir
-                            source_path = parent_dir
-                        else:
-                            # Copy just the file
+                        # Never copy the src/ directory itself - only copy individual files at its root
+                        # This prevents copying the entire src/ directory (with all subdirectories)
+                        # when only a file like _globals.py is needed
+                        if parent_dir == self.project_root / "src":
+                            # For files at root of src/, only copy the file, not the directory
                             track_path = source_path
+                        else:
+                            # Only copy parent directory if:
+                            # 1. It's a package (has __init__.py), OR
+                            # 2. Files from it are actually imported (which is the case here)
+                            # But only copy the immediate parent, not entire directory trees
+                            parent_is_package = (parent_dir / "__init__.py").exists()
+                            files_are_imported = True  # Always true when processing an import
+
+                            # Only copy immediate parent directory, not grandparent directories
+                            # This prevents copying entire trees like models/Information_extraction
+                            # when we only need models/Information_extraction/_shared_ie
+                            # Use original_src_dir for relative path checks to correctly handle
+                            # subfolder builds where src_dir may point to temp directory
+                            should_copy_dir = (
+                                not self._should_exclude_path(parent_dir)
+                                and (
+                                    parent_is_package or files_are_imported
+                                )  # Package OR files imported
+                                and not parent_dir.is_relative_to(self.src_dir)
+                                and not self.original_src_dir.is_relative_to(parent_dir)
+                                and parent_dir != self.project_root
+                                and parent_dir != self.project_root.parent
+                            )
+
+                            if should_copy_dir:
+                                # Copy the directory instead of just the file
+                                track_path = parent_dir
+                                source_path = parent_dir
+                            else:
+                                # Copy just the file
+                                track_path = source_path
                     elif source_path.is_dir():
                         # Don't copy directories that contain src_dir
                         if self.src_dir.is_relative_to(source_path):

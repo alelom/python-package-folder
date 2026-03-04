@@ -71,6 +71,8 @@ class BuildManager:
                 src_dir = self.project_root / "src"
 
         self.src_dir = Path(src_dir).resolve()
+        # Store original src_dir before any changes (e.g., when temp directory is created)
+        self.original_src_dir = self.src_dir
 
         # Validate source directory
         if not self.src_dir.exists():
@@ -280,10 +282,12 @@ class BuildManager:
                     # Update src_dir to point to temp package directory
                     self.src_dir = self.subfolder_config._temp_package_dir
                     # Recreate finder with updated src_dir so it calculates target paths correctly
+                    # Pass original_src_dir for relative path checks to prevent copying entire src/ directory
                     self.finder = ExternalDependencyFinder(
                         self.project_root,
                         self.src_dir,
                         exclude_patterns=self.exclude_patterns,
+                        original_src_dir=self.original_src_dir,
                     )
                     print(
                         f"Using temporary package directory for build: {self.src_dir}"

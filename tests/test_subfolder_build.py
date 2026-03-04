@@ -1209,6 +1209,94 @@ class TestTemporaryPackageDirectory:
         
         config.restore()
 
+    def test_only_globals_file_copied_not_entire_src_directory(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """
+        Test that when a subfolder imports a file from src/ root (like _globals.py),
+        only that file is copied, not the entire src/ directory.
+        
+        This is a regression test for the bug where the entire src/ directory
+        (including features/, integration/, docs/, infrastructure/) was being
+        copied when only _globals.py was needed.
+        """
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+        
+        # Create a file in subfolder that imports _globals
+        (subfolder / "__init__.py").write_text("# Package init")
+        (subfolder / "module.py").write_text(
+            "from _globals import IS_TESTING\n\ndef func(): return IS_TESTING"
+        )
+        
+        # Create _globals.py at root of src/ (outside subfolder)
+        src_dir = project_root / "src"
+        src_dir.mkdir(exist_ok=True)
+        (src_dir / "_globals.py").write_text("IS_TESTING = False")
+        
+        # Create other directories in src/ that should NOT be copied
+        (src_dir / "features").mkdir()
+        (src_dir / "features" / "__init__.py").write_text("# Features")
+        (src_dir / "features" / "feature.py").write_text("def feature(): pass")
+        
+        (src_dir / "integration").mkdir()
+        (src_dir / "integration" / "__init__.py").write_text("# Integration")
+        (src_dir / "integration" / "integration.py").write_text("def integration(): pass")
+        
+        (src_dir / "docs").mkdir()
+        (src_dir / "docs" / "readme.md").write_text("# Docs")
+        
+        (src_dir / "infrastructure").mkdir()
+        (src_dir / "infrastructure" / "__init__.py").write_text("# Infrastructure")
+        
+        # Build the subfolder
+        manager = BuildManager(project_root=project_root, src_dir=subfolder)
+        
+        try:
+            external_deps = manager.prepare_build(version="1.0.0", package_name="my-package")
+            
+            # Verify _globals.py was found as an external dependency
+            globals_deps = [d for d in external_deps if d.source_path.name == "_globals.py"]
+            assert len(globals_deps) > 0, "_globals.py should be found as an external dependency"
+            
+            # Verify the temp package directory exists
+            assert manager.subfolder_config is not None
+            temp_dir = manager.subfolder_config._temp_package_dir
+            assert temp_dir is not None and temp_dir.exists()
+            
+            # Verify _globals.py was copied to temp directory
+            assert (temp_dir / "_globals.py").exists(), "_globals.py should be copied to temp directory"
+            
+            # Verify other directories from src/ were NOT copied
+            assert not (temp_dir / "features").exists(), (
+                "features/ directory should NOT be copied (not imported)"
+            )
+            assert not (temp_dir / "integration").exists(), (
+                "integration/ directory should NOT be copied (not imported)"
+            )
+            assert not (temp_dir / "docs").exists(), (
+                "docs/ directory should NOT be copied (not imported)"
+            )
+            assert not (temp_dir / "infrastructure").exists(), (
+                "infrastructure/ directory should NOT be copied (not imported)"
+            )
+            
+            # Verify only _globals.py and subfolder contents are in temp directory
+            all_items = list(temp_dir.iterdir())
+            item_names = [item.name for item in all_items]
+            
+            # Should have _globals.py, __init__.py, module.py, and possibly pyproject.toml
+            # But NOT features/, integration/, docs/, infrastructure/
+            unexpected_dirs = {"features", "integration", "docs", "infrastructure"}
+            found_unexpected = unexpected_dirs.intersection(set(item_names))
+            assert len(found_unexpected) == 0, (
+                f"Found unexpected directories in temp package: {found_unexpected}. "
+                f"Only _globals.py should be copied, not the entire src/ directory."
+            )
+            
+        finally:
+            manager.cleanup()
+
 
 class TestWheelPackaging:
     """Tests to verify that wheels are correctly packaged with the right directory structure."""
