@@ -837,25 +837,40 @@ class BuildManager:
         """
         try:
             # Get relative paths from src_dir
-            file_rel = file_path.parent.relative_to(src_dir)
-            module_rel = module_path.parent.relative_to(src_dir)
+            file_dir = file_path.parent
+            module_dir = module_path.parent if module_path.is_file() else module_path
+            
+            # Normalize both to be relative to src_dir
+            try:
+                file_rel = file_dir.relative_to(src_dir)
+                module_rel = module_dir.relative_to(src_dir)
+            except ValueError:
+                # If not relative to src_dir, fall back to single dot
+                return "."
 
             # Calculate depth difference
             # If paths are ".", depth is 0
-            file_depth = len(file_rel.parts) if file_rel.parts != (".",) else 0
-            module_depth = len(module_rel.parts) if module_rel.parts != (".",) else 0
+            file_depth = len(file_rel.parts) if file_rel.parts and file_rel.parts != (".",) else 0
+            module_depth = len(module_rel.parts) if module_rel.parts and module_rel.parts != (".",) else 0
 
             depth_diff = file_depth - module_depth
 
             if depth_diff == 0:
-                return "."  # Same level
+                # Same depth - check if they're the same directory or siblings
+                if file_rel == module_rel:
+                    return "."  # Same directory
+                else:
+                    # Sibling directories at same depth - need to go up one level
+                    # e.g., PytorchCoco/ and _shared/ both at depth 1, need ..
+                    return ".."
             elif depth_diff > 0:
                 # File is deeper than module, need to go up
+                # e.g., file at depth 2, module at depth 0, need ...
                 return "." * (depth_diff + 1)  # Go up depth_diff levels
             else:
                 # Module is deeper than file, use single dot
                 return "."
-        except ValueError:
+        except (ValueError, AttributeError):
             # If paths are not relative to src_dir, fall back to single dot
             return "."
 
