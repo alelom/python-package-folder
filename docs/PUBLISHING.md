@@ -7,8 +7,9 @@ The package includes built-in support for publishing to PyPI, TestPyPI, and Azur
 Publish after building:
 
 ```bash
-# Publish to PyPI
+# Publish to PyPI (version resolved automatically via conventional commits)
 python-package-folder --publish pypi
+# See [Version Resolution](VERSION_RESOLUTION.md) for details on automatic versioning
 
 # Publish to PyPI with a specific version
 python-package-folder --version "1.2.3" --publish pypi
@@ -40,6 +41,20 @@ python-package-folder --publish pypi --skip-existing
 **Common Authentication Issues:**
 - **403 Forbidden**: Usually means you used your username instead of `__token__` with an API token. The tool now auto-detects this.
 - **TestPyPI vs PyPI**: TestPyPI requires a separate account and token from https://test.pypi.org/manage/account/token/
+
+## Version Resolution
+
+When publishing without `--version`, the tool automatically resolves the next version using [conventional commits](VERSION_RESOLUTION.md#automatic-version-resolution). This queries the target registry for the latest published version and calculates the next version based on commit messages since that version.
+
+```bash
+# Version resolved automatically from conventional commits
+python-package-folder --publish pypi
+
+# Or specify version explicitly
+python-package-folder --version "1.2.3" --publish pypi
+```
+
+See [Version Resolution](VERSION_RESOLUTION.md) for complete details on how automatic versioning works.
 
 ## Smart File Filtering
 

@@ -29,6 +29,13 @@ The `--version` option:
 
 When `--version` is not provided, the tool automatically determines the next version using conventional commits. This is a **Python-native implementation** that follows the same conventions as [semantic-release](https://semantic-release.gitbook.io/semantic-release/) using the Angular preset, but requires no Node.js dependencies.
 
+**When Version Resolution Happens:**
+- Version resolution is triggered when `--version` is **not** provided AND:
+  - You're building a **subfolder** (any directory that's not the main `src/` directory), OR
+  - You're using `--publish` (for main package builds)
+- If `--version` is provided, it is used directly and no resolution is performed
+- If `--analyze-only` is used, version resolution is skipped
+
 **Version Resolution Flow:**
 
 ```mermaid
@@ -48,7 +55,8 @@ flowchart TD
 - **Baseline version**:
   - **Registry Query (Preferred)**: When publishing to a repository (PyPI, TestPyPI, or Azure Artifacts), the tool queries the target registry for the latest published version and uses it as the baseline for version calculation. This ensures version calculations are based on what's actually published, not just git tags.
   - **Git Tags (Fallback)**: If the package doesn't exist on the registry yet (first release) or if registry query fails, the tool falls back to using git tags to determine the starting version.
-- **New version to publish**: After determining the baseline version, the tool analyzes commits since that version to calculate the next version bump (major, minor, or patch) based on [conventional commit](https://www.conventionalcommits.org/en/v1.0.0/) messages.
+  - **Default Baseline**: If no registry version or git tags are found, the baseline defaults to `0.0.0` (treating it as a first release)
+- **New version to publish**: After determining the baseline version, the tool analyzes commits since that version to calculate the next version bump (major, minor, or patch) based on [conventional commit](https://www.conventionalcommits.org/en/v1.0.0/) messages. If no conventional commits are found but a baseline exists (and it's not `0.0.0`), the tool automatically bumps the minor version.
 
 **For subfolder builds (Workflow 1):**
 - Uses per-package tags: `{package-name}-v{version}` (e.g., `my-package-v1.2.3`)
@@ -112,9 +120,20 @@ python-package-folder --publish pypi
 python-package-folder --publish pypi
 ```
 
+**Version Calculation Behavior:**
+- **With conventional commits**: Version is calculated based on commit types (feat → minor, fix → patch, BREAKING CHANGE → major)
+- **Without conventional commits** (but baseline exists):
+  - If a baseline version exists (from registry or git tags) and it's not `0.0.0`, the tool automatically bumps the **minor version** even if no conventional commits are found
+  - Example: Baseline `1.2.3` with only `docs:` commits → Next version: `1.3.0`
+- **First release** (`0.0.0` baseline):
+  - If any commits exist (even without conventional format), defaults to `0.1.0`
+  - If no commits exist, version resolution fails and `--version` must be provided explicitly
+- **No baseline found**: Version resolution fails and `--version` must be provided explicitly
+
 **Requirements:**
-- Conventional commits (e.g., `fix:`, `feat:`, `BREAKING CHANGE:`) are required for version calculation
-- The tool will fall back to requiring `--version` explicitly if no baseline version is found or no relevant commits are detected
+- A baseline version (from registry or git tags) is required for version calculation, OR
+- For first releases, at least one commit must exist
+- If no baseline is found and no commits exist, `--version` must be provided explicitly
 
 ## Subfolder Versioning
 

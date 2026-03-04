@@ -77,7 +77,7 @@ The tool automatically:
 - **For subfolder builds**: Handles `pyproject.toml` configuration:
   - **If `pyproject.toml` exists in subfolder**: 
     - Uses that file (copies it to project root temporarily, adjusting package paths and ensuring `[build-system]` uses hatchling)
-    - **Version handling**: The version in the subfolder's `pyproject.toml` is automatically updated to match the derived version (from conventional commits or `--version` argument). A warning is shown if versions differ.
+    - **Version handling**: The version in the subfolder's `pyproject.toml` is automatically updated to match the derived version (from [conventional commits](VERSION_RESOLUTION.md#automatic-version-resolution) or `--version` argument). A warning is shown if versions differ.
     - **Name handling**: If the subfolder's `pyproject.toml` has a `name` field that differs from the derived name, a warning is shown but the subfolder's name is used (not the derived one).
     - **Dependencies handling**: If the subfolder's `pyproject.toml` has a non-empty `dependencies` field, automatic dependency detection is skipped with a warning. To enable automatic detection, remove or empty the `dependencies` field.
     - **Field merging**: Missing fields (like `description`, `authors`, `keywords`, `classifiers`, `license`, `urls`, etc.) are automatically filled from the parent `pyproject.toml` if available.
@@ -107,7 +107,7 @@ python-package-folder --version "0.1.0" --package-name "my-subfolder-package" --
 python-package-folder --version "0.1.0" --dependency-group "dev" --publish pypi
 
 # If subfolder has its own pyproject.toml, it will be used automatically
-# The version will be updated to match the derived version (from conventional commits)
+# The version will be updated to match the derived version (from [conventional commits](VERSION_RESOLUTION.md#automatic-version-resolution))
 # The package name from the subfolder toml will be used (even if it differs from derived)
 cd src/integration/my_package  # assuming my_package/pyproject.toml exists
 python-package-folder --publish pypi
@@ -117,7 +117,7 @@ python-package-folder --publish pypi
 
 When a subfolder has its own `pyproject.toml`, the tool intelligently merges it with derived information:
 
-1. **Version**: Always updated to match the derived version (from conventional commits or `--version`). If the subfolder's version differs, a warning is shown but the derived version is used.
+1. **Version**: Always updated to match the derived version (from [conventional commits](VERSION_RESOLUTION.md#automatic-version-resolution) or `--version`). If the subfolder's version differs, a warning is shown but the derived version is used.
 
 2. **Name**: If the subfolder's `pyproject.toml` has a `name` field, it takes precedence over the derived name. A warning is shown if they differ.
 
