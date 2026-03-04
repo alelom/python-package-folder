@@ -1130,6 +1130,85 @@ class TestTemporaryPackageDirectory:
 
         config.restore()
 
+    def test_temp_package_directory_respects_exclude_patterns_without_matching_test_dirs(
+        self, test_project_with_pyproject: Path
+    ) -> None:
+        """
+        Test that exclude patterns don't incorrectly match pytest temp directory names.
+        
+        This test ensures that exclude patterns like '.*test_.*' only match files/directories
+        within the source directory, not the pytest temp directory name (e.g., 
+        'test_real_world_ml_drawing_assistant_data_scenario').
+        
+        This is a regression test for the bug where all files were excluded because the
+        exclude pattern matching checked the entire absolute path instead of just the
+        relative path within src_dir.
+        """
+        project_root = test_project_with_pyproject
+        subfolder = project_root / "subfolder"
+        
+        # Create files that should NOT be excluded
+        (subfolder / "__init__.py").write_text("# Package init")
+        (subfolder / "module.py").write_text("def func(): pass")
+        (subfolder / "utils.py").write_text("def util(): pass")
+        
+        # Create a file that SHOULD be excluded (matches pattern)
+        (subfolder / "test_helper.py").write_text("def test(): pass")
+        (subfolder / "_SS").mkdir()
+        (subfolder / "_SS" / "excluded.py").write_text("# Should be excluded")
+        
+        # Update pyproject.toml with exclude patterns that could match test directory names
+        pyproject_path = project_root / "pyproject.toml"
+        pyproject_content = pyproject_path.read_text()
+        # Add exclude patterns including ones that could match pytest temp dirs
+        if "[tool.python-package-folder]" not in pyproject_content:
+            pyproject_content += "\n[tool.python-package-folder]\n"
+        pyproject_content += 'exclude-patterns = ["_SS", "__SS", ".*_test.*", ".*test_.*", "sandbox"]\n'
+        pyproject_path.write_text(pyproject_content)
+        
+        config = SubfolderBuildConfig(
+            project_root=project_root,
+            src_dir=subfolder,
+            version="1.0.0",
+            package_name="my-package",
+        )
+        
+        # Create temp pyproject (which creates temp package directory with exclude patterns)
+        config.create_temp_pyproject()
+        
+        temp_package_dir = config._temp_package_dir
+        assert temp_package_dir is not None
+        assert temp_package_dir.exists()
+        
+        # Files that should NOT be excluded should be copied
+        assert (temp_package_dir / "__init__.py").exists(), (
+            "__init__.py should be copied (doesn't match exclude patterns)"
+        )
+        assert (temp_package_dir / "module.py").exists(), (
+            "module.py should be copied (doesn't match exclude patterns)"
+        )
+        assert (temp_package_dir / "utils.py").exists(), (
+            "utils.py should be copied (doesn't match exclude patterns)"
+        )
+        
+        # Files that SHOULD be excluded should NOT be copied
+        assert not (temp_package_dir / "test_helper.py").exists(), (
+            "test_helper.py should be excluded (matches '.*test_.*' pattern)"
+        )
+        assert not (temp_package_dir / "_SS").exists(), (
+            "_SS directory should be excluded (matches '_SS' pattern)"
+        )
+        
+        # Verify at least some files were copied (this would fail if all files were excluded)
+        all_files = list(temp_package_dir.rglob("*"))
+        all_files = [f for f in all_files if f.is_file()]
+        assert len(all_files) >= 3, (
+            f"Expected at least 3 files to be copied, but only found {len(all_files)}. "
+            f"This suggests exclude patterns are incorrectly matching test directory names."
+        )
+        
+        config.restore()
+
 
 class TestWheelPackaging:
     """Tests to verify that wheels are correctly packaged with the right directory structure."""

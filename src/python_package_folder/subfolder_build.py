@@ -134,6 +134,7 @@ class SubfolderBuildConfig:
         This way, hatchling will install it with the correct name without needing force-include.
         """
         if not self.package_name:
+            print("DEBUG: No package_name provided, skipping temp package directory creation", file=sys.stderr)
             return
         
         # Convert package name (with hyphens) to import name (with underscores)
@@ -144,13 +145,21 @@ class SubfolderBuildConfig:
         # This way, hatchling will install it with the correct name
         import_name_dir = self.project_root / import_name
         
+        print(
+            f"DEBUG: Creating temporary package directory: {import_name_dir} "
+            f"(from src_dir: {self.src_dir}, import name: {import_name})",
+            file=sys.stderr,
+        )
+        
         # Check if the directory already exists and is the correct one
         if import_name_dir.exists() and import_name_dir == self._temp_package_dir:
             # Directory already exists and is the correct one, no need to recreate
+            print(f"DEBUG: Temporary package directory already exists: {import_name_dir}", file=sys.stderr)
             return
         
         # Remove if it already exists (from a previous build)
         if import_name_dir.exists():
+            print(f"DEBUG: Removing existing temporary package directory: {import_name_dir}", file=sys.stderr)
             shutil.rmtree(import_name_dir)
         
         # Copy the entire source directory contents directly to the import name directory
@@ -171,9 +180,38 @@ class SubfolderBuildConfig:
             self._temp_package_dir = None
             return
         
+        # Get exclude patterns from parent pyproject.toml
+        exclude_patterns = []
+        original_pyproject = self.project_root / "pyproject.toml"
+        if original_pyproject.exists():
+            exclude_patterns = read_exclude_patterns(original_pyproject)
+            print(
+                f"DEBUG: Using exclude patterns for temp directory copy: {exclude_patterns}",
+                file=sys.stderr,
+            )
+        
+        # Check if src_dir has any files before copying
+        src_files = list(self.src_dir.rglob("*"))
+        src_files = [f for f in src_files if f.is_file()]
+        print(
+            f"DEBUG: Source directory {self.src_dir} contains {len(src_files)} files before copy",
+            file=sys.stderr,
+        )
+        
+        # Use a copy method that respects exclude patterns and handles missing directories
         try:
-            shutil.copytree(self.src_dir, import_name_dir)
+            print(f"DEBUG: Starting copy from {self.src_dir} to {import_name_dir}", file=sys.stderr)
+            self._copytree_excluding_patterns(self.src_dir, import_name_dir, exclude_patterns)
             self._temp_package_dir = import_name_dir
+            
+            # Verify files were copied
+            copied_files = list(import_name_dir.rglob("*"))
+            copied_files = [f for f in copied_files if f.is_file()]
+            print(
+                f"DEBUG: After copy, temp directory {import_name_dir} contains {len(copied_files)} files",
+                file=sys.stderr,
+            )
+            
             print(
                 f"Created temporary package directory: {import_name_dir} "
                 f"(import name: {import_name})"
@@ -183,8 +221,141 @@ class SubfolderBuildConfig:
                 f"Warning: Could not create temporary package directory: {e}",
                 file=sys.stderr,
             )
+            import traceback
+            print(f"DEBUG: Traceback: {traceback.format_exc()}", file=sys.stderr)
             # Fall back to using src_dir directly
             self._temp_package_dir = None
+    
+    def _copytree_excluding_patterns(self, src: Path, dst: Path, exclude_patterns: list[str]) -> None:
+        """
+        Copy a directory tree, excluding certain patterns and handling missing directories gracefully.
+        
+        This is similar to BuildManager._copytree_excluding but works without needing
+        the BuildManager instance. It respects exclude patterns and skips missing directories
+        (e.g., broken symlinks or already-excluded directories).
+        
+        Args:
+            src: Source directory
+            dst: Destination directory
+            exclude_patterns: List of patterns to exclude (e.g., ['_SS', '__SS', '.*_test.*'])
+        """
+        default_patterns = [
+            "_SS",
+            "__SS",
+            "_sandbox",
+            "__sandbox",
+            "_skip",
+            "__skip",
+            "_test",
+            "__test__",
+        ]
+        all_exclude_patterns = default_patterns + exclude_patterns
+        
+        def should_exclude(path: Path) -> bool:
+            """Check if a path should be excluded."""
+            import re
+            # Only check parts of the path relative to src_dir, not the entire absolute path
+            # This prevents matching test directory names or other parts outside the source
+            try:
+                rel_path = path.relative_to(src)
+                # Check each component of the relative path
+                for part in rel_path.parts:
+                    # Check if any part matches an exclusion pattern
+                    for pattern in all_exclude_patterns:
+                        # Determine if pattern is a regex (contains regex special characters)
+                        is_regex = any(c in pattern for c in ['.', '*', '+', '?', '^', '$', '[', ']', '(', ')', '{', '}', '|', '\\'])
+                        
+                        if is_regex:
+                            # Use regex matching for patterns like '.*_test.*'
+                            try:
+                                if re.search(pattern, part):
+                                    print(f"DEBUG: Excluding {path} (part '{part}' matches regex pattern '{pattern}')", file=sys.stderr)
+                                    return True
+                            except re.error:
+                                # Invalid regex, fall back to simple string matching
+                                if part == pattern or part.startswith(pattern):
+                                    print(f"DEBUG: Excluding {path} (part '{part}' matches pattern '{pattern}')", file=sys.stderr)
+                                    return True
+                        else:
+                            # Simple string matching for patterns like '_SS'
+                            if part == pattern or part.startswith(pattern):
+                                print(f"DEBUG: Excluding {path} (part '{part}' matches pattern '{pattern}')", file=sys.stderr)
+                                return True
+            except ValueError:
+                # Path is not relative to src, check the name only
+                for pattern in all_exclude_patterns:
+                    is_regex = any(c in pattern for c in ['.', '*', '+', '?', '^', '$', '[', ']', '(', ')', '{', '}', '|', '\\'])
+                    if is_regex:
+                        try:
+                            if re.search(pattern, path.name):
+                                return True
+                        except re.error:
+                            if path.name == pattern or path.name.startswith(pattern):
+                                return True
+                    else:
+                        if path.name == pattern or path.name.startswith(pattern):
+                            return True
+            return False
+        
+        # Create destination directory
+        dst.mkdir(parents=True, exist_ok=True)
+        
+        # Copy files and subdirectories, excluding patterns
+        copied_count = 0
+        excluded_count = 0
+        skipped_count = 0
+        try:
+            items = list(src.iterdir())
+            print(f"DEBUG: Copying from {src} to {dst}, found {len(items)} items", file=sys.stderr)
+            for item in items:
+                if should_exclude(item):
+                    print(f"DEBUG: Excluding {item} from temp package directory copy", file=sys.stderr)
+                    excluded_count += 1
+                    continue
+                
+                src_item = src / item.name
+                dst_item = dst / item.name
+                
+                # Skip if source doesn't exist (broken symlink, already deleted, etc.)
+                if not src_item.exists():
+                    print(
+                        f"DEBUG: Skipping non-existent item: {src_item}",
+                        file=sys.stderr,
+                    )
+                    skipped_count += 1
+                    continue
+                
+                if src_item.is_file():
+                    try:
+                        shutil.copy2(src_item, dst_item)
+                        copied_count += 1
+                        print(f"DEBUG: Copied file {src_item} -> {dst_item}", file=sys.stderr)
+                    except (OSError, IOError) as e:
+                        print(
+                            f"DEBUG: Could not copy file {src_item}: {e}, skipping",
+                            file=sys.stderr,
+                        )
+                        skipped_count += 1
+                        continue
+                elif src_item.is_dir():
+                    try:
+                        self._copytree_excluding_patterns(src_item, dst_item, exclude_patterns)
+                        copied_count += 1
+                        print(f"DEBUG: Copied directory {src_item} -> {dst_item}", file=sys.stderr)
+                    except (OSError, IOError) as e:
+                        print(
+                            f"DEBUG: Could not copy directory {src_item}: {e}, skipping",
+                            file=sys.stderr,
+                        )
+                        skipped_count += 1
+                        continue
+            print(
+                f"DEBUG: Copy summary: {copied_count} items copied, {excluded_count} excluded, {skipped_count} skipped",
+                file=sys.stderr,
+            )
+        except (OSError, IOError) as e:
+            # If we can't even iterate the source directory, that's a problem
+            raise RuntimeError(f"Cannot iterate source directory {src}: {e}") from e
 
     def _get_package_structure(self) -> tuple[str, list[str]]:
         """
@@ -197,6 +368,13 @@ class SubfolderBuildConfig:
         """
         # Use temporary package directory if it exists, otherwise use src_dir
         package_dir = self._temp_package_dir if self._temp_package_dir and self._temp_package_dir.exists() else self.src_dir
+        
+        print(
+            f"DEBUG: _get_package_structure: temp_package_dir={self._temp_package_dir}, "
+            f"exists={self._temp_package_dir.exists() if self._temp_package_dir else False}, "
+            f"using package_dir={package_dir}",
+            file=sys.stderr,
+        )
         
         # Check if package_dir itself is a package (has __init__.py)
         has_init = (package_dir / "__init__.py").exists()
@@ -211,6 +389,16 @@ class SubfolderBuildConfig:
             packages_path = str(rel_path).replace("\\", "/")
         except ValueError:
             packages_path = None
+            print(
+                f"DEBUG: Could not calculate relative path from {self.project_root} to {package_dir}",
+                file=sys.stderr,
+            )
+
+        print(
+            f"DEBUG: _get_package_structure returning: packages_path={packages_path}, "
+            f"has_init={has_init}, has_py_files={has_py_files}",
+            file=sys.stderr,
+        )
 
         # If package_dir has Python files but no __init__.py, we need to make it a package
         # or include it as a module directory
@@ -518,8 +706,28 @@ class SubfolderBuildConfig:
         # This will copy the __init__.py we just created (if any)
         self._create_temp_package_directory()
         
+        # Log the result of temp directory creation
+        if self._temp_package_dir and self._temp_package_dir.exists():
+            py_files = list(self._temp_package_dir.glob("*.py"))
+            print(
+                f"DEBUG: Temp package directory created successfully: {self._temp_package_dir}, "
+                f"contains {len(py_files)} Python files",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"WARNING: Temp package directory was NOT created. "
+                f"Will fall back to using src_dir: {self.src_dir}",
+                file=sys.stderr,
+            )
+        
         # Determine which directory to use (temp package dir or src_dir)
         package_dir = self._temp_package_dir if self._temp_package_dir and self._temp_package_dir.exists() else self.src_dir
+        print(
+            f"DEBUG: Using package_dir for build: {package_dir} "
+            f"(temp_dir={self._temp_package_dir}, src_dir={self.src_dir})",
+            file=sys.stderr,
+        )
 
         # Read the original pyproject.toml
         original_pyproject = self.project_root / "pyproject.toml"

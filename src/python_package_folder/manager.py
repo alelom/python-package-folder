@@ -1153,12 +1153,24 @@ class BuildManager:
                         f"Temporary package directory does not exist: {temp_dir}. "
                         "This should have been created during prepare_build()."
                     )
+                # Debug: List all files in temp directory
+                all_files = list(temp_dir.rglob("*"))
+                all_files = [f for f in all_files if f.is_file()]
+                print(
+                    f"DEBUG: Temp package directory {temp_dir} contains {len(all_files)} files: "
+                    f"{[str(f.relative_to(temp_dir)) for f in all_files[:10]]}",
+                    file=sys.stderr,
+                )
                 # Verify it contains Python files
                 py_files = list(temp_dir.glob("*.py"))
                 if not py_files:
-                    raise RuntimeError(
-                        f"Temporary package directory exists but contains no Python files: {temp_dir}"
-                    )
+                    # Also check recursively
+                    py_files = list(temp_dir.rglob("*.py"))
+                    if not py_files:
+                        raise RuntimeError(
+                            f"Temporary package directory exists but contains no Python files: {temp_dir}. "
+                            f"Total files found: {len(all_files)}"
+                        )
                 # Verify __init__.py exists
                 if not (temp_dir / "__init__.py").exists():
                     raise RuntimeError(
