@@ -7,13 +7,7 @@ Easily build and publish any target folder in a repository, including subfolders
 Together with [sysappend](https://pypi.org/project/sysappend/), this library makes relative imports, flexible import management, and package publishing a breeze.
 
 ## Documentation
-
-- [Installation and Requirements](docs/INSTALLATION.md)
-- [Usage Guide](docs/USAGE.md) - How it works, Python API, subfolder builds
-- [Version Resolution](docs/VERSION_RESOLUTION.md) - Manual and automatic versioning with conventional commits
-- [Publishing Packages](docs/PUBLISHING.md) - Publishing to PyPI, TestPyPI, and Azure Artifacts
-- [API Reference](docs/REFERENCE.md) - Command-line options and Python API
-- [Development](docs/DEVELOPMENT.md) - Contributing and project structure
+See the [WIKI](https://github.com/alelom/python-package-folder/wiki)
 
 ## Use Cases
 
